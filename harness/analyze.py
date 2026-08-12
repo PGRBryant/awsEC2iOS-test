@@ -8,12 +8,22 @@
 Stdlib only, so it runs anywhere. If matplotlib happens to be installed it also
 drops pass-rate and boot-time charts next to the CSV; otherwise it skips them.
 
-Usage: python3 analyze.py path/to/results.csv
+Usage: python3 analyze.py path/to/results.csv [--report out.md]
 """
 import csv
 import statistics
 import sys
 from collections import defaultdict
+
+# RAM per EC2 Mac instance type (GiB) — for extrapolating measured density.
+EC2_TYPES = [
+    ("mac2.metal (M1)", 16),
+    ("mac-m4.metal (M4)", 24),
+    ("mac2-m2.metal (M2)", 24),
+    ("mac2-m2pro.metal (M2 Pro)", 32),
+    ("mac-m4pro.metal (M4 Pro)", 48),
+]
+USABLE_RAM_FRACTION = 0.85  # leave headroom for macOS + tooling
 
 
 def load(path):
@@ -21,11 +31,58 @@ def load(path):
         return list(csv.DictReader(f))
 
 
+def ram_model(rows):
+    """Least-squares fit of host memory vs actually-booted sims.
+
+    Returns (slope_mb_per_sim, intercept_mb) or None when the data can't
+    support a fit (fewer than 3 distinct boot counts, or a degenerate slope).
+    """
+    pts = [(int(r["boots_ok"]), int(r["mem_used_mb"]))
+           for r in rows
+           if r["boots_ok"].isdigit() and r["mem_used_mb"].isdigit()
+           and int(r["mem_used_mb"]) > 0]
+    xs = sorted({x for x, _ in pts})
+    if len(xs) < 3:
+        return None
+    n = len(pts)
+    sx = sum(x for x, _ in pts)
+    sy = sum(y for _, y in pts)
+    sxx = sum(x * x for x, _ in pts)
+    sxy = sum(x * y for x, y in pts)
+    denom = n * sxx - sx * sx
+    if denom == 0:
+        return None
+    slope = (n * sxy - sx * sy) / denom
+    intercept = (sy - slope * sx) / n
+    if slope < 50:  # < 50MB/sim means memory isn't what we measured
+        return None
+    return slope, intercept
+
+
+def predict(slope, intercept):
+    """Predicted max sims per EC2 instance type from the fitted RAM model."""
+    out = []
+    for name, gb in EC2_TYPES:
+        usable = gb * 1024 * USABLE_RAM_FRACTION
+        out.append((name, gb, max(0, int((usable - intercept) / slope))))
+    return out
+
+
 def main():
-    if len(sys.argv) != 2:
-        print("usage: analyze.py <results.csv>", file=sys.stderr)
+    argv = sys.argv[1:]
+    report_path = None
+    if "--report" in argv:
+        i = argv.index("--report")
+        try:
+            report_path = argv[i + 1]
+        except IndexError:
+            print("--report needs a path", file=sys.stderr)
+            sys.exit(2)
+        del argv[i:i + 2]
+    if len(argv) != 1:
+        print("usage: analyze.py <results.csv> [--report out.md]", file=sys.stderr)
         sys.exit(2)
-    path = sys.argv[1]
+    path = argv[0]
     rows = load(path)
     if not rows:
         print("no data rows in", path, file=sys.stderr)
@@ -72,7 +129,69 @@ def main():
     print(f"  Hard ceiling (boot)    : {hard_ceiling if hard_ceiling is not None else 'not reached in this sweep'}")
     print("  legend:  (blank)=clean  ~=degraded/render  !=boot failure\n")
 
+    # --- RAM model + cross-hardware extrapolation ---
+    fit = ram_model(rows)
+    preds = None
+    if fit:
+        slope, intercept = fit
+        preds = predict(slope, intercept)
+        print(f"  RAM model: ~{slope:.0f} MB per booted sim over a "
+              f"{intercept / 1024:.1f} GB base ({USABLE_RAM_FRACTION:.0%} usable RAM assumed)")
+        print("  Predicted RAM-bound ceiling by EC2 Mac instance type:")
+        for name, gb, n_pred in preds:
+            print(f"    {name:<28} {gb:>3} GB  ->  ~{n_pred} sims")
+        print("  (directional only — process/fd limits or CPU may bind first; "
+              "verify on target)\n")
+    else:
+        print("  (not enough distinct boot counts for a RAM model — "
+              "sweep more levels)\n")
+
+    if report_path:
+        _write_report(report_path, path, rows, levels, by_level,
+                      reliable, hard_ceiling, fit, preds)
+        print(f"  report written to {report_path}\n")
+
     _maybe_charts(path, levels, by_level)
+
+
+def _write_report(out, csv_path, rows, levels, by_level,
+                  reliable, hard_ceiling, fit, preds):
+    """Markdown report — the Phase 5 deliverable, generated not hand-written."""
+    L = []
+    L.append("# Simulator density results\n")
+    L.append(f"- **Reliable working point:** "
+             f"{reliable if reliable is not None else 'none — even the smallest level degraded'}")
+    L.append(f"- **Hard ceiling (first boot failure):** "
+             f"{hard_ceiling if hard_ceiling is not None else 'not reached in this sweep'}")
+    L.append(f"- Device: `{rows[0]['device']}` · Runtime: "
+             f"`{rows[0]['runtime'].split('.')[-1]}` · Source: `{csv_path}`\n")
+    L.append("| N | trials | boot % | render % | boot wall (s) | peak mem (GB) | failure modes |")
+    L.append("|--:|--:|--:|--:|--:|--:|:--|")
+    for n in levels:
+        trs = by_level[n]
+        t = len(trs)
+        boot = sum(int(r["boots_ok"]) for r in trs) / (n * t) * 100
+        rend = sum(int(r["renders_ok"]) for r in trs) / (n * t) * 100
+        walls = [int(r["boot_wall_ms"]) for r in trs if r["boot_wall_ms"].isdigit()]
+        wall = statistics.mean(walls) / 1000 if walls else 0
+        peak = max((int(r["mem_used_mb"]) for r in trs
+                    if r["mem_used_mb"].isdigit()), default=0) / 1024
+        modes = ", ".join(sorted({r["failure_mode"] for r in trs if r["failure_mode"]})) or "—"
+        L.append(f"| {n} | {t} | {boot:.0f}% | {rend:.0f}% | {wall:.1f} | {peak:.1f} | {modes} |")
+    if fit and preds:
+        slope, intercept = fit
+        L.append(f"\n## RAM model\n")
+        L.append(f"~**{slope:.0f} MB per booted simulator** over a "
+                 f"{intercept / 1024:.1f} GB base "
+                 f"({USABLE_RAM_FRACTION:.0%} of RAM assumed usable).\n")
+        L.append("| EC2 instance | RAM | predicted ceiling |")
+        L.append("|:--|--:|--:|")
+        for name, gb, n_pred in preds:
+            L.append(f"| `{name}` | {gb} GB | ~{n_pred} sims |")
+        L.append("\n*Directional only: process/fd limits or CPU can bind before "
+                 "RAM does — verify on the target instance.*")
+    with open(out, "w") as f:
+        f.write("\n".join(L) + "\n")
 
 
 def _maybe_charts(path, levels, by_level):

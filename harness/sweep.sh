@@ -23,6 +23,8 @@ OUT_DIR=""                   # results dir; auto-timestamped if empty
 BUNDLE_ID="com.simdensity.app"
 KEEP_GOING=1                  # keep sweeping to higher N after a level fails
 SHOT_MIN_BYTES=8000           # a screenshot smaller than this ~= nothing rendered
+DRY_RUN=0                     # 1 = use harness/mock/simctl (no Mac needed)
+MOCK_SIMCTL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mock/simctl"
 
 usage() {
   cat <<EOF
@@ -38,6 +40,8 @@ Usage: sweep.sh --app <path-to-.app> [options]
   --launch-timeout S   Per-sim launch/render deadline         (default: $LAUNCH_TIMEOUT)
   --out DIR            Results directory                      (default: results/<timestamp>)
   --stop-on-fail       Stop the sweep at the first level that isn't 100% clean
+  --dry-run            Use the mock simctl (harness/mock/simctl); runs on any OS.
+                       --app becomes optional. Fault-injection via MOCK_* env vars.
 EOF
 }
 
@@ -52,6 +56,7 @@ while [ $# -gt 0 ]; do
     --launch-timeout) LAUNCH_TIMEOUT="$2"; shift 2;;
     --out)            OUT_DIR="$2"; shift 2;;
     --stop-on-fail)   KEEP_GOING=0; shift;;
+    --dry-run)        DRY_RUN=1; shift;;
     -h|--help)        usage; exit 0;;
     *) echo "unknown arg: $1" >&2; usage; exit 2;;
   esac
@@ -64,11 +69,26 @@ c_info() { printf '\033[36m[sweep]\033[0m %s\n' "$*"; }
 c_warn() { printf '\033[33m[sweep]\033[0m %s\n' "$*"; }
 c_err()  { printf '\033[31m[sweep]\033[0m %s\n' "$*" >&2; }
 
-command -v xcrun >/dev/null 2>&1 || { c_err "xcrun not found — need Xcode command line tools"; exit 1; }
-[ -n "$APP" ] || { c_err "--app is required"; usage; exit 2; }
+if [ "$DRY_RUN" -eq 1 ]; then
+  [ -x "$MOCK_SIMCTL" ] || { c_err "mock simctl missing/not executable: $MOCK_SIMCTL"; exit 1; }
+  # --app is optional in dry-run: fabricate one so the install path still executes
+  if [ -z "$APP" ]; then
+    APP="${TMPDIR:-/tmp}/simdensity-dryrun.app"
+    mkdir -p "$APP"
+  fi
+  c_warn "DRY RUN — using mock simctl ($MOCK_SIMCTL); results are synthetic"
+else
+  command -v xcrun >/dev/null 2>&1 || { c_err "xcrun not found — need Xcode command line tools"; exit 1; }
+  [ -n "$APP" ] || { c_err "--app is required"; usage; exit 2; }
+fi
 [ -d "$APP" ] || { c_err "app not found: $APP"; exit 2; }
 
-simctl() { xcrun simctl "$@"; }
+simctl() {
+  if [ "$DRY_RUN" -eq 1 ]; then "$MOCK_SIMCTL" "$@"; else xcrun simctl "$@"; fi
+}
+
+# byte size of a file, macOS (stat -f) or GNU (stat -c)
+filesize() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || echo 0; }
 
 # Newest available iOS runtime id, via python3 JSON parse (robust vs text scraping).
 detect_runtime() {
@@ -84,7 +104,12 @@ print(ios[-1]["identifier"] if ios else "")
 # ms since epoch (python3 avoids GNU-date dependency)
 now_ms() { python3 -c 'import time;print(int(time.time()*1000))'; }
 
-is_booted() { simctl list devices booted 2>/dev/null | grep -q "$1"; }
+# NB: capture-then-match, NOT `| grep -q`: grep -q exits on first match and the
+# resulting SIGPIPE to simctl + pipefail reads as failure whenever N>1.
+is_booted() {
+  local out; out="$(simctl list devices booted 2>/dev/null)"
+  case "$out" in *"$1"*) return 0;; *) return 1;; esac
+}
 
 # Poll until a sim reports Booted or the deadline passes. Echoes boot ms or "timeout".
 wait_booted() {
@@ -99,6 +124,12 @@ wait_booted() {
 
 # Host resource snapshot -> "mem_used_mb,mem_total_mb,load1,proc_count,swap_used_mb"
 sample_metrics() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    # synthetic but shaped like reality: ~900MB per booted sim over a 4GB base
+    local b; b="$(simctl list devices booted 2>/dev/null | grep -c Booted || true)"
+    echo "$(( 4000 + b * 900 )),24576,$b.5,$(( 400 + b * 60 )),0"
+    return
+  fi
   python3 - <<'PY'
 import subprocess, re
 def sh(c): return subprocess.run(c, shell=True, capture_output=True, text=True).stdout
@@ -143,7 +174,8 @@ cleanup() {
     simctl delete   "$u"  >/dev/null 2>&1
   done
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM   # triggers the EXIT trap exactly once
 
 # ---------------------------------------------------------------------------
 # one trial at level N
@@ -188,16 +220,20 @@ run_trial() {
     else
       [ -n "$failure" ] || failure="launch"; continue
     fi
-    # render check: a real screen produces a non-trivial screenshot
-    sleep 2
+    # render check: a real screen produces a non-trivial screenshot. Retry up
+    # to LAUNCH_TIMEOUT — a loaded host can take a while to first-paint.
     local shot="$OUT_DIR/screens/n${n}-r${rep}-${u:0:6}.png"
-    if simctl io "$u" screenshot "$shot" >/dev/null 2>&1; then
-      local sz; sz="$(stat -f%z "$shot" 2>/dev/null || echo 0)"
-      if [ "$sz" -ge "$SHOT_MIN_BYTES" ]; then
-        renders_ok=$((renders_ok+1))
-      else
-        [ -n "$failure" ] || failure="no_render"
-      fi
+    local sz=0 rdeadline=$(( $(date +%s) + LAUNCH_TIMEOUT ))
+    while [ "$(date +%s)" -lt "$rdeadline" ]; do
+      simctl io "$u" screenshot "$shot" >/dev/null 2>&1
+      sz="$(filesize "$shot")"
+      [ "$sz" -ge "$SHOT_MIN_BYTES" ] && break
+      sleep 2
+    done
+    if [ "$sz" -ge "$SHOT_MIN_BYTES" ]; then
+      renders_ok=$((renders_ok+1))
+    else
+      [ -n "$failure" ] || failure="no_render"
     fi
   done
 
@@ -223,8 +259,11 @@ teardown() {
     simctl delete   "$u" >/dev/null 2>&1
     # drop from CREATED so the EXIT trap doesn't re-handle it
     local nc=() x
-    for x in "${CREATED[@]:-}"; do [ "$x" = "$u" ] || nc+=("$x"); done
-    CREATED=("${nc[@]:-}")
+    for x in "${CREATED[@]:-}"; do
+      [ -n "$x" ] && [ "$x" != "$u" ] && nc+=("$x")
+    done
+    CREATED=()
+    [ "${#nc[@]}" -eq 0 ] || CREATED=("${nc[@]}")
   done
 }
 

@@ -14,7 +14,23 @@ proven for free before a paid host is ever allocated.
 
 ---
 
-## Phase 0 — run it locally (no AWS)
+## Try it right now — no Mac required
+
+The harness has a `--dry-run` mode backed by a mock `simctl`
+(`harness/mock/simctl`), so the entire sweep control flow runs on any OS:
+
+```bash
+make dryrun       # full sweep against the mock — seconds, zero dependencies
+```
+
+Fault injection exercises the failure paths the real experiment exists to find:
+
+```bash
+MOCK_BOOT_HANG_AT=4 make dryrun     # boots hang beyond 4 concurrent sims
+MOCK_RENDER_FAIL_AT=3 make dryrun   # sims beyond #3 boot but render blank
+```
+
+## Phase 0 — run it on a Mac (no AWS)
 
 Requires: a Mac, Xcode + command line tools, an installed iOS simulator runtime.
 [Homebrew](https://brew.sh) is used to fetch `xcodegen` if it isn't present.
@@ -22,9 +38,15 @@ Requires: a Mac, Xcode + command line tools, an installed iOS simulator runtime.
 ```bash
 make bootstrap    # install xcodegen, generate the project, build the app once
 make smoke        # fastest end-to-end check: N=1 and N=2, one trial each
+make uitest       # optional: one-time XCUITest interactivity check on one sim
 make sweep        # the real sweep (default N = 1 2 4 8, 3 repeats)
-make analyze      # summarize the latest run into the two headline numbers
+make analyze      # headline numbers + RAM model + report.md
 ```
+
+`analyze` fits **MB-per-booted-sim** from your run and predicts the RAM-bound
+ceiling for every EC2 Mac instance type — so even a sweep on a small machine
+(or your laptop) gives a directional answer for the big ones before you pay
+for a Dedicated Host.
 
 Push further once the small runs are green:
 
@@ -39,8 +61,10 @@ Push further once the small runs are green:
 |------|------------|
 | `app/` | Trivial SwiftUI app (one full-bleed screen) + XcodeGen `project.yml`. Kept trivial on purpose — we measure the platform, not the app. |
 | `scripts/bootstrap.sh` | One-time prep: installs tooling, generates the Xcode project, builds the `.app` once. |
-| `harness/sweep.sh` | The experiment. Creates/boots/installs/launches/verifies N sims per trial and writes one CSV row per trial. |
-| `harness/analyze.py` | Turns `results.csv` into the reliable-working-point and hard-ceiling numbers (+ charts if matplotlib is present). |
+| `harness/sweep.sh` | The experiment. Creates/boots/installs/launches/verifies N sims per trial and writes one CSV row per trial. `--dry-run` swaps in the mock. |
+| `harness/mock/simctl` | Mock `simctl` with fault injection (`MOCK_*` env vars) so the sweep logic is testable anywhere, including Linux CI. |
+| `harness/analyze.py` | Headline numbers, RAM model + per-instance ceiling predictions, `--report` markdown (+ charts if matplotlib is present). |
+| `app/UITests/` | One-assertion XCUITest (`make uitest`) — single-sim interactivity check before a paid run. |
 | `aws/` | Provisioning runbook for the EC2 Mac dedicated host (Phase 1). |
 
 ## How the measurement works

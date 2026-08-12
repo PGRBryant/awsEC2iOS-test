@@ -24,3 +24,29 @@ targets:
         # A launch screen is required or the app runs in a small letterboxed frame,
         # which would skew screenshot-based render verification.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+
+  # Optional single-sim correctness check (`make uitest`). The sweep itself
+  # verifies rendering via screenshots — this asserts the UI is genuinely
+  # interactive, once, before a paid run.
+  SimDensityUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: SimDensity
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.simdensity.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+
+schemes:
+  SimDensity:
+    build:
+      targets:
+        SimDensity: all
+        SimDensityUITests: [test]
+    test:
+      targets:
+        - SimDensityUITests
