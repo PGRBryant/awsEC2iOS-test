@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# mock simctl — stands in for `xcrun simctl` when sweep.sh runs with --dry-run.
+# Lets the whole sweep control flow execute on any OS (including Linux CI) with
+# injectable failures, so the harness logic is testable without a Mac.
+#
+# Fault-injection knobs (env vars):
+#   MOCK_STATE_DIR       where sim state lives (default /tmp/simdensity-mock)
+#   MOCK_BOOT_SECS       seconds a boot takes to complete        (default 1)
+#   MOCK_MAX_SIMS        `create` fails beyond this many live sims   (0 = never)
+#   MOCK_BOOT_HANG_AT    sims booted beyond this count never finish  (0 = never)
+#   MOCK_RENDER_FAIL_AT  sims created beyond this ordinal render blank (0 = never)
+set -uo pipefail
+
+STATE="${MOCK_STATE_DIR:-/tmp/simdensity-mock}"
+BOOT_SECS="${MOCK_BOOT_SECS:-1}"
+MAX_SIMS="${MOCK_MAX_SIMS:-0}"
+BOOT_HANG_AT="${MOCK_BOOT_HANG_AT:-0}"
+RENDER_FAIL_AT="${MOCK_RENDER_FAIL_AT:-0}"
+mkdir -p "$STATE"
+
+# state file per sim: $STATE/<udid> with lines "status=..." "ready_at=..." "ordinal=..."
+getf()  { grep "^$2=" "$STATE/$1" 2>/dev/null | head -1 | cut -d= -f2; }
+setf()  { local f="$STATE/$1"; grep -v "^$2=" "$f" 2>/dev/null > "$f.tmp" || true; echo "$2=$3" >> "$f.tmp"; mv "$f.tmp" "$f"; }
+live()  { find "$STATE" -maxdepth 1 -type f ! -name '.*' 2>/dev/null | wc -l; }
+new_udid() { cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen; }
+
+is_ready() { # booted and past ready_at?
+  local st ra; st="$(getf "$1" status)"; ra="$(getf "$1" ready_at)"
+  [ "$st" = "booting" ] || return 1
+  [ "$ra" != "never" ] || return 1
+  [ "$(date +%s)" -ge "$ra" ]
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  create)
+    # create NAME DEVICE RUNTIME -> udid on stdout (empty + rc!=0 on failure)
+    if [ "$MAX_SIMS" -gt 0 ] && [ "$(live)" -ge "$MAX_SIMS" ]; then
+      echo "mock: sim limit reached" >&2; exit 1
+    fi
+    u="$(new_udid)"
+    ord=$(( $(live) + 1 ))
+    { echo "status=created"; echo "ready_at=never"; echo "ordinal=$ord"; echo "name=${1:-}"; } > "$STATE/$u"
+    echo "$u"
+    ;;
+  boot)
+    u="$1"; [ -f "$STATE/$u" ] || { echo "mock: no such sim" >&2; exit 1; }
+    # count sims already booting/booted; beyond BOOT_HANG_AT they never finish
+    booting=0
+    for f in "$STATE"/*; do [ "$(getf "$(basename "$f")" status)" = "booting" ] && booting=$((booting+1)); done
+    setf "$u" status booting
+    if [ "$BOOT_HANG_AT" -gt 0 ] && [ "$booting" -ge "$BOOT_HANG_AT" ]; then
+      setf "$u" ready_at never
+    else
+      setf "$u" ready_at "$(( $(date +%s) + BOOT_SECS ))"
+    fi
+    ;;
+  list)
+    sub="${1:-}"
+    if [ "$sub" = "devices" ] && [ "${2:-}" = "booted" ]; then
+      for f in "$STATE"/*; do
+        [ -f "$f" ] || continue
+        u="$(basename "$f")"
+        is_ready "$u" && echo "    mock-sim ($u) (Booted)"
+      done
+    elif [ "$sub" = "runtimes" ]; then
+      cat <<'JSON'
+{"runtimes":[{"identifier":"com.apple.CoreSimulator.SimRuntime.iOS-17-5","name":"iOS 17.5","version":"17.5","isAvailable":true}]}
+JSON
+    fi
+    ;;
+  install|launch)
+    u="$1"
+    is_ready "$u" || { echo "mock: sim not booted" >&2; exit 1; }
+    ;;
+  io)
+    # io UDID screenshot PATH
+    u="$1"; path="${3:-/dev/null}"
+    is_ready "$u" || { echo "mock: sim not booted" >&2; exit 1; }
+    ord="$(getf "$u" ordinal)"
+    if [ "$RENDER_FAIL_AT" -gt 0 ] && [ "${ord:-1}" -gt "$RENDER_FAIL_AT" ]; then
+      head -c 500 /dev/zero > "$path"      # blank sim: tiny screenshot
+    else
+      head -c 20000 /dev/urandom > "$path" # rendered screen: real-sized PNG-ish blob
+    fi
+    ;;
+  shutdown)
+    u="$1"; [ -f "$STATE/$u" ] && setf "$u" status shutdown
+    ;;
+  delete)
+    u="$1"; rm -f "$STATE/$u"
+    ;;
+  *)
+    echo "mock simctl: unhandled command '$cmd' $*" >&2
+    exit 64
+    ;;
+esac

@@ -1,0 +1,20 @@
+# Generated Xcode project (regenerate with `xcodegen generate`)
+app/SimDensity.xcodeproj/
+
+# Build output
+app/build/
+DerivedData/
+
+# Experiment results (keep the harness, not the run artifacts)
+results/
+
+# macOS / editor cruft
+.DS_Store
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+
+# AWS provisioning run-state (host/instance ids)
+aws/.state

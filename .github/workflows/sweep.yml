@@ -1,0 +1,55 @@
+# Runs the simulator-density sweep on a self-hosted macOS runner (the EC2 Mac).
+# Register the runner first — see aws/README.md "Optional — real CI/CD".
+name: Simulator density sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      levels:
+        description: 'N values to sweep (space-separated)'
+        default: '1 2 4 8 16'
+      repeats:
+        description: 'Trials per level'
+        default: '3'
+      device:
+        description: 'Simulator device type'
+        default: 'iPhone 15'
+
+jobs:
+  sweep:
+    # 'self-hosted' + 'macOS' labels target the EC2 Mac runner, not GitHub's
+    # hosted macs (which can't nest the virtualization this experiment needs).
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun simctl list runtimes available
+
+      - name: Build the app once
+        run: ./scripts/bootstrap.sh
+
+      - name: Run the sweep
+        run: |
+          ./harness/sweep.sh \
+            --app app/build/Build/Products/Debug-iphonesimulator/SimDensity.app \
+            --levels "${{ github.event.inputs.levels }}" \
+            --repeats "${{ github.event.inputs.repeats }}" \
+            --device "${{ github.event.inputs.device }}"
+
+      - name: Analyze
+        if: always()
+        run: |
+          latest=$(ls -td results/*/ | head -1)
+          python3 harness/analyze.py "$latest/results.csv" | tee "$latest/summary.txt"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sweep-results
+          path: results/

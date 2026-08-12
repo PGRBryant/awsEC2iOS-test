@@ -1,0 +1,52 @@
+# XcodeGen spec — generates SimDensity.xcodeproj from source with no fragile
+# pbxproj checked in. Regenerate any time with `xcodegen generate` (run from this dir).
+name: SimDensity
+options:
+  bundleIdPrefix: com.simdensity
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+targets:
+  SimDensity:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.simdensity.app
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # A launch screen is required or the app runs in a small letterboxed frame,
+        # which would skew screenshot-based render verification.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+
+  # Optional single-sim correctness check (`make uitest`). The sweep itself
+  # verifies rendering via screenshots — this asserts the UI is genuinely
+  # interactive, once, before a paid run.
+  SimDensityUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: SimDensity
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.simdensity.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+
+schemes:
+  SimDensity:
+    build:
+      targets:
+        SimDensity: all
+        SimDensityUITests: [test]
+    test:
+      targets:
+        - SimDensityUITests
