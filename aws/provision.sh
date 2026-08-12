@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# provision.sh — allocate an EC2 Mac Dedicated Host and launch a macOS instance.
+#
+# ⚠️  This STARTS THE 24-HOUR BILLING CLOCK. A Mac Dedicated Host cannot be
+#     released for 24 hours after allocation (Apple licensing). Run Phase 0
+#     locally first so the paid host only ever runs known-good code.
+#
+# Requires: awscli v2, configured credentials, an existing EC2 key pair.
+# Uses only `aws` + `--query` (no jq). Writes host/instance ids to aws/.state
+# so teardown.sh can find them.
+set -euo pipefail
+
+# --- config (override via env or flags) ---
+REGION="${REGION:-$(aws configure get region 2>/dev/null || echo us-east-1)}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-mac2-m2.metal}"   # directional sweet spot: M2 / 24GB
+MACOS="${MACOS:-sequoia}"                          # SSM codename; see --list-macos
+KEY_NAME="${KEY_NAME:-}"                           # REQUIRED: an existing EC2 key pair
+AZ="${AZ:-}"                                        # optional; auto-picked if empty
+SUBNET_ID="${SUBNET_ID:-}"                          # optional; default-VPC subnet if empty
+SG_ID="${SG_ID:-}"                                  # optional; a /32 SSH SG is made if empty
+STATE_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.state"
+
+usage() { grep '^#' "$0" | sed 's/^# \{0,1\}//' | head -20; cat <<EOF
+
+Flags:  --type T  --region R  --macos NAME  --key NAME  --az AZ
+        --subnet ID  --sg ID  --list-macos  --list-azs
+Env:    same names uppercased (INSTANCE_TYPE, REGION, MACOS, KEY_NAME, ...)
+EOF
+}
+
+log()  { printf '\033[36m[provision]\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m[provision]\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m[provision] error:\033[0m %s\n' "$*" >&2; exit 1; }
+aws_() { aws --region "$REGION" "$@"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --type) INSTANCE_TYPE="$2"; shift 2;;
+    --region) REGION="$2"; shift 2;;
+    --macos) MACOS="$2"; shift 2;;
+    --key) KEY_NAME="$2"; shift 2;;
+    --az) AZ="$2"; shift 2;;
+    --subnet) SUBNET_ID="$2"; shift 2;;
+    --sg) SG_ID="$2"; shift 2;;
+    --list-macos)
+      aws --region "$REGION" ssm get-parameters-by-path \
+        --path /aws/service/ec2-macos --recursive \
+        --query 'Parameters[?contains(Name,`arm64_mac/latest/image_id`)].Name' \
+        --output text | tr '\t' '\n'; exit 0;;
+    --list-azs)
+      aws --region "$REGION" ec2 describe-instance-type-offerings \
+        --location-type availability-zone \
+        --filters "Name=instance-type,Values=$INSTANCE_TYPE" \
+        --query 'InstanceTypeOfferings[].Location' --output text | tr '\t' '\n'; exit 0;;
+    -h|--help) usage; exit 0;;
+    *) die "unknown arg: $1";;
+  esac
+done
+
+command -v aws >/dev/null 2>&1 || die "awscli not found — install AWS CLI v2"
+aws_ sts get-caller-identity >/dev/null 2>&1 || die "AWS credentials not working (aws sts get-caller-identity failed)"
+[ -n "$KEY_NAME" ] || die "KEY_NAME is required (an existing EC2 key pair). Set --key or KEY_NAME."
+aws_ ec2 describe-key-pairs --key-names "$KEY_NAME" >/dev/null 2>&1 || die "key pair '$KEY_NAME' not found in $REGION"
+
+log "region=$REGION  type=$INSTANCE_TYPE  macos=$MACOS  key=$KEY_NAME"
+
+# --- resolve macOS AMI via SSM (robust vs image-name scraping) ---
+SSM_PATH="/aws/service/ec2-macos/${MACOS}/arm64_mac/latest/image_id"
+AMI_ID="$(aws_ ssm get-parameters --names "$SSM_PATH" \
+          --query 'Parameters[0].Value' --output text 2>/dev/null || true)"
+[ -n "$AMI_ID" ] && [ "$AMI_ID" != "None" ] || \
+  die "no AMI for macOS '$MACOS' in $REGION. List options: $0 --list-macos"
+log "AMI: $AMI_ID"
+
+# --- pick an AZ that actually offers this Mac type ---
+if [ -z "$AZ" ]; then
+  AZ="$(aws_ ec2 describe-instance-type-offerings --location-type availability-zone \
+        --filters "Name=instance-type,Values=$INSTANCE_TYPE" \
+        --query 'InstanceTypeOfferings[0].Location' --output text)"
+  [ -n "$AZ" ] && [ "$AZ" != "None" ] || die "$INSTANCE_TYPE not offered in any AZ of $REGION"
+fi
+log "availability zone: $AZ"
+
+# --- default-VPC subnet in that AZ, if not supplied ---
+if [ -z "$SUBNET_ID" ]; then
+  SUBNET_ID="$(aws_ ec2 describe-subnets \
+    --filters "Name=availability-zone,Values=$AZ" "Name=default-for-az,Values=true" \
+    --query 'Subnets[0].SubnetId' --output text)"
+  [ -n "$SUBNET_ID" ] && [ "$SUBNET_ID" != "None" ] || \
+    die "no default subnet in $AZ — pass --subnet <id>"
+fi
+log "subnet: $SUBNET_ID"
+
+# --- SSH security group scoped to your current public IP, if not supplied ---
+if [ -z "$SG_ID" ]; then
+  MYIP="$(curl -fsS https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$MYIP" ] || die "could not determine your public IP — pass --sg <id>"
+  VPC_ID="$(aws_ ec2 describe-subnets --subnet-ids "$SUBNET_ID" \
+            --query 'Subnets[0].VpcId' --output text)"
+  SG_ID="$(aws_ ec2 describe-security-groups \
+            --filters "Name=group-name,Values=simdensity-ssh" "Name=vpc-id,Values=$VPC_ID" \
+            --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo None)"
+  if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+    SG_ID="$(aws_ ec2 create-security-group --group-name simdensity-ssh \
+             --description "SSH to SimDensity EC2 Mac" --vpc-id "$VPC_ID" \
+             --query 'GroupId' --output text)"
+    log "created security group $SG_ID"
+  fi
+  aws_ ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+    --protocol tcp --port 22 --cidr "${MYIP}/32" >/dev/null 2>&1 || true
+  log "SSH allowed from ${MYIP}/32 via $SG_ID"
+fi
+
+# --- allocate the Dedicated Host (24h clock starts) ---
+warn "allocating Dedicated Host — this starts the 24-HOUR minimum billing window."
+HOST_ID="$(aws_ ec2 allocate-hosts --instance-type "$INSTANCE_TYPE" \
+  --availability-zone "$AZ" --auto-placement on --quantity 1 \
+  --tag-specifications 'ResourceType=dedicated-host,Tags=[{Key=project,Value=simdensity}]' \
+  --query 'HostIds[0]' --output text)" \
+  || die "allocate-hosts failed — often a quota of 0 (see aws/README.md) or no Mac capacity in $AZ"
+log "Dedicated Host: $HOST_ID"
+printf 'HOST_ID=%s\nREGION=%s\nAZ=%s\nINSTANCE_TYPE=%s\n' "$HOST_ID" "$REGION" "$AZ" "$INSTANCE_TYPE" > "$STATE_FILE"
+
+# --- launch the Mac instance onto the host ---
+log "launching instance onto host..."
+INSTANCE_ID="$(aws_ ec2 run-instances --instance-type "$INSTANCE_TYPE" \
+  --image-id "$AMI_ID" --key-name "$KEY_NAME" \
+  --tenancy host --placement "HostId=$HOST_ID" \
+  --subnet-id "$SUBNET_ID" --security-group-ids "$SG_ID" \
+  --associate-public-ip-address \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=project,Value=simdensity},{Key=Name,Value=simdensity-mac}]' \
+  --query 'Instances[0].InstanceId' --output text)" \
+  || die "run-instances failed (host $HOST_ID left allocated — rerun or run teardown.sh)"
+echo "INSTANCE_ID=$INSTANCE_ID" >> "$STATE_FILE"
+log "instance: $INSTANCE_ID — waiting for running state..."
+
+aws_ ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+PUB_IP="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+          --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
+echo "PUBLIC_IP=$PUB_IP" >> "$STATE_FILE"
+
+printf '\n\033[32m[provision] host is up.\033[0m\n'
+cat <<EOF
+  instance : $INSTANCE_ID
+  public IP: $PUB_IP
+  ssh      : ssh ec2-user@$PUB_IP     (first boot resizes APFS and can take several minutes)
+
+  Next:  bootstrap the harness on the Mac (see aws/README.md), then run the sweep.
+
+  ⚠️  24-HOUR CLOCK IS RUNNING. Release with:  aws/teardown.sh
+      (release is refused until 24h after allocation — that's expected.)
+EOF

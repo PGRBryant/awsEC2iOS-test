@@ -15,3 +15,6 @@ results/
 # Python
 __pycache__/
 *.pyc
+
+# AWS provisioning run-state (host/instance ids)
+aws/.state
