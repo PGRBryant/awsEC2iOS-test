@@ -102,6 +102,8 @@ jobs:
       - name: Real shard run (1 vs 2 shards, 12 UI tests)
         run: |
           ./harness/shard.sh --levels "1 2" --boot-timeout 420 --out results/shard
+          # a red suite must not hide inside a green job (run 8 lesson)
+          python3 -c "import csv; rows=list(csv.DictReader(open('results/shard/speedup.csv'))); assert rows and all(int(r['failed_shards'])==0 and int(r['passed_shards'])>0 for r in rows), f'shard failures: {rows}'"
 
       - name: Analyze + report + dashboard
         if: always()

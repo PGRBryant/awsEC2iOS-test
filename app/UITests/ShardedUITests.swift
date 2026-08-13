@@ -14,7 +14,10 @@ final class ShardedUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["SIM DENSITY"].waitForExistence(timeout: 20),
                       "app did not render under profile \(profile)")
-        XCTAssertEqual(app.staticTexts["sd-profile"].label, profile)
+        // match by visible label, not identifier: the container's
+        // accessibilityIdentifier collapses child identifiers out of the AX tree
+        XCTAssertTrue(app.staticTexts[profile].waitForExistence(timeout: 10),
+                      "profile label \(profile) not shown")
         // hold briefly so the test represents real interaction time, not a blink
         Thread.sleep(forTimeInterval: 2)
     }
