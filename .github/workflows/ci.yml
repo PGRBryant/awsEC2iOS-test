@@ -65,10 +65,10 @@ jobs:
           python3 harness/analyze.py results/clean/results.csv --report results/clean/report.md
           test -s results/clean/report.md
 
-  smoke-macos:
+  sweep-macos:
     runs-on: macos-15
-    # ANIMATE-profile sims boot slowly on 3-core runners (~30 min for the sweep
-    # alone — that slowness is real load-profile data) + the shard run after it
+    # INFER inference loops make later boots slow — that IS the load data.
+    # Shard runs in its own parallel job so neither starves the other.
     timeout-minutes: 90
     permissions:
       contents: write   # publish results to the ci-results branch
@@ -92,27 +92,13 @@ jobs:
             --levels "1 2 3" --repeats 1 --boot-timeout 420 \
             --profile INFER --sample-interval 2 --out results/smoke
 
-      - name: Build tests once (build-for-testing)
-        run: |
-          cd app && xcodebuild build-for-testing \
-            -project SimDensity.xcodeproj -scheme SimDensity \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build CODE_SIGNING_ALLOWED=NO 2>&1 | tail -5
-
-      - name: Real shard run (1 vs 2 shards, 12 UI tests)
-        run: |
-          ./harness/shard.sh --levels "1 2" --boot-timeout 420 --out results/shard
-          # a red suite must not hide inside a green job (run 8 lesson)
-          python3 -c "import csv; rows=list(csv.DictReader(open('results/shard/speedup.csv'))); assert rows and all(int(r['failed_shards'])==0 and int(r['passed_shards'])>0 for r in rows), f'shard failures: {rows}'"
-
       - name: Analyze + report + dashboard
         if: always()
         run: |
           test -f results/smoke/results.csv || { echo "no results produced"; exit 1; }
           python3 harness/analyze.py results/smoke/results.csv --report results/smoke/report.md \
             | tee results/smoke/summary.txt
-          cd harness && python3 dashboard.py ../results/smoke \
-            $( test -f ../results/shard/speedup.csv && echo --shard ../results/shard/speedup.csv )
+          cd harness && python3 dashboard.py ../results/smoke
           cd ..
           # smoke must be fully clean at these tiny levels
           ! grep -E ',(boot_timeout|no_render|partial_render|create|install|launch)$' results/smoke/results.csv
@@ -121,12 +107,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-macos-results
+          name: sweep-results
           path: results/
 
       # Actions artifact downloads redirect to blob storage some networks can't
-      # reach; a plain git branch is fetchable anywhere github.com is. Screens
-      # are excluded to keep the branch tiny; the run artifact keeps everything.
+      # reach; a plain git branch is fetchable anywhere github.com is.
       - name: Publish results to ci-results branch
         if: always()
         env:
@@ -141,5 +126,52 @@ jobs:
           git config user.email "github-actions@users.noreply.github.com"
           echo "run ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA} · $(date -u +%FT%TZ)" > RUN.txt
           git add -A
-          git commit -qm "CI results: run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git commit -qm "CI sweep results: run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-results
+
+  shard-macos:
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: write   # publish results to the ci-results-shard branch
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate project + build-for-testing
+        run: |
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+          cd app && xcodegen generate
+          xcodebuild build-for-testing \
+            -project SimDensity.xcodeproj -scheme SimDensity \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO 2>&1 | tail -5
+
+      - name: Real shard run (1 vs 2 shards, 12 UI tests)
+        run: |
+          ./harness/shard.sh --levels "1 2" --boot-timeout 420 --out results/shard
+          # a red suite must not hide inside a green job (run 8 lesson)
+          python3 -c "import csv; rows=list(csv.DictReader(open('results/shard/speedup.csv'))); assert rows and all(int(r['failed_shards'])==0 and int(r['passed_shards'])>0 for r in rows), f'shard failures: {rows}'"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-results
+          path: results/
+
+      - name: Publish results to ci-results-shard branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          d=$(mktemp -d)
+          cp -R results "$d/results"
+          cd "$d"
+          git init -q -b ci-results-shard
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "run ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA} · $(date -u +%FT%TZ)" > RUN.txt
+          git add -A
+          git commit -qm "CI shard results: run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-results-shard
