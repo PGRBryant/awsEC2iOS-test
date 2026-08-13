@@ -90,12 +90,39 @@ simctl() {
 # byte size of a file, macOS (stat -f) or GNU (stat -c)
 filesize() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || echo 0; }
 
-# Newest iPhone device-type identifier (device availability varies by Xcode).
+# Newest iPhone SUPPORTED BY the chosen runtime. Pairing matters: an
+# unsupported device+runtime pair creates fine but never boots (found the hard
+# way on a hosted runner: global devicetypes list ends at iPhone 6s Plus, which
+# iOS 26 can't boot). Falls back to the global list, sorted by model number.
 detect_device() {
+  simctl list runtimes --json | RUNTIME="$RUNTIME" python3 -c '
+import json,os,re,sys
+rt=os.environ["RUNTIME"]
+d=json.load(sys.stdin)
+sdt=[]
+for r in d.get("runtimes",[]):
+    if r.get("identifier")==rt:
+        sdt=r.get("supportedDeviceTypes",[])
+def pick(types):
+    ph=[t for t in types if "iPhone" in t.get("name","") and "SE" not in t.get("name","")]
+    def key(t):
+        m=re.search(r"iPhone (\d+)",t.get("name",""))
+        return (int(m.group(1)) if m else 0, t.get("name",""))
+    ph.sort(key=key)
+    return ph[-1]["identifier"] if ph else ""
+print(pick(sdt))
+'
+}
+
+detect_device_fallback() {
   simctl list devicetypes --json | python3 -c '
-import json,sys
+import json,re,sys
 d=json.load(sys.stdin)
 ph=[t for t in d.get("devicetypes",[]) if "iPhone" in t.get("name","") and "SE" not in t.get("name","")]
+def key(t):
+    m=re.search(r"iPhone (\d+)",t.get("name",""))
+    return (int(m.group(1)) if m else 0, t.get("name",""))
+ph.sort(key=key)
 print(ph[-1]["identifier"] if ph else "")
 '
 }
@@ -171,6 +198,7 @@ c_info "runtime: $RUNTIME"
 [ "$DEVICE" = "auto" ] && DEVICE=""
 if [ -z "$DEVICE" ]; then
   DEVICE="$(detect_device)"
+  [ -n "$DEVICE" ] || DEVICE="$(detect_device_fallback)"
   [ -n "$DEVICE" ] || { c_err "no iPhone device type found via simctl"; exit 1; }
 fi
 c_info "device: $DEVICE"
@@ -214,7 +242,8 @@ run_trial() {
 
   # -- boot all N, then wait for each (boots overlap; wall = slowest) --
   local t0; t0="$(now_ms)"
-  for u in "${udids[@]}"; do simctl boot "$u" >/dev/null 2>&1; done
+  # keep boot stderr: unsupported pairings and runtime problems surface here
+  for u in "${udids[@]}"; do simctl boot "$u" >/dev/null 2>>"$OUT_DIR/boot-errors.log"; done
   for u in "${udids[@]}"; do
     if [ "$(wait_booted "$u")" != "timeout" ]; then
       boots_ok=$((boots_ok+1))
