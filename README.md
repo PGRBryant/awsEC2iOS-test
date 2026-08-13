@@ -54,10 +54,17 @@ Density is the capacity story; what a phone team actually buys cloud sims for
 is **faster PR feedback**. Two additions make the demo mirror that use case:
 
 ```bash
-make sweep PROFILE=ANIMATE        # density under load: IDLE | ANIMATE | SCROLL
+make sweep PROFILE=ANIMATE        # density under load: IDLE | ANIMATE | SCROLL | INFER
 make bootstrap-tests && make shard SHARDS="1 2 4"   # suite wall-time vs shard count
 make dashboard                    # self-contained HTML dashboard from the results
 ```
+
+`PROFILE=INFER` is the edge-AI case: each sim runs a continuous loop of real
+on-device neural inference (Vision OCR on generated images — the models ship
+inside iOS, so nothing is bundled or downloaded). Per-sim inferences/sec are
+written to the app sandbox and collected via `simctl get_app_container`, giving
+the sweep an **aggregate edge-AI throughput vs N** curve: does total inference
+scale with more sims, plateau at core saturation, or collapse?
 
 - **Load profiles** — the app renders realistic work (animation churn,
   auto-scrolling lists) selected via `SD_PROFILE`, so the ceiling is measured

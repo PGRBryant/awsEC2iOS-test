@@ -50,7 +50,11 @@ make the demo mirror that use case, still without AWS spend:
 - ✅ Per-second resource timeline (`timeline.csv`) sampled during sweeps
 - ✅ HTML dashboard (`harness/dashboard.py`): self-contained, light+dark,
   CVD-validated palette; CI uploads it as an artifact
-- 🔄 Real-Mac validation of all four (hosted CI, PR #3)
+- ✅ Edge-AI profile (`INFER`): real on-device neural inference via Vision
+  OCR (models ship with the OS — zero bundled assets); per-sim rates
+  collected via `simctl get_app_container`; dashboard charts aggregate
+  inferences/sec vs N
+- 🔄 Real-Mac validation (hosted CI, PR #3)
 
 ## Phase 3 — AWS provisioning (the 24h clock)
 

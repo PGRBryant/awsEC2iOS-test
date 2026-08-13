@@ -84,13 +84,13 @@ jobs:
       - name: Bootstrap (real xcodebuild)
         run: ./scripts/bootstrap.sh
 
-      - name: Mini sweep (real simctl, N = 1 2 3, ANIMATE profile)
+      - name: Mini sweep (real simctl, N = 1 2 3, INFER profile)
         run: |
           # generous boot deadline: first boot of a runtime on a cold runner is slow
           ./harness/sweep.sh \
             --app app/build/Build/Products/Debug-iphonesimulator/SimDensity.app \
             --levels "1 2 3" --repeats 1 --boot-timeout 420 \
-            --profile ANIMATE --sample-interval 2 --out results/smoke
+            --profile INFER --sample-interval 2 --out results/smoke
 
       - name: Build tests once (build-for-testing)
         run: |

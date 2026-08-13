@@ -172,6 +172,18 @@ def build(results_dir, shard_csv, out_path):
                    y_fmt=lambda v: f"{v:g}s"),
     ]
 
+    # edge-AI throughput (INFER profile): does aggregate inference scale with N?
+    infer_vals = [statistics.mean(float(r.get("infer_ops", 0) or 0)
+                                  for r in by_level[n]) for n in levels]
+    has_infer = any(v > 0 for v in infer_vals)
+    if has_infer:
+        charts.append(line_chart(
+            "Aggregate edge inference vs N", levels, infer_vals,
+            [f"N={n}: {v:.1f} inf/s total ({v/n:.1f}/sim)"
+             for n, v in zip(levels, infer_vals)],
+            TEAL, y_fmt=lambda v: f"{v:g}/s",
+            note="on-device Vision OCR, all sims summed"))
+
     if fit:
         slope, intercept = fit
         xs = [int(r["boots_ok"]) for r in rows if int(r.get("mem_used_mb", "0") or 0) > 0]
@@ -213,6 +225,10 @@ def build(results_dir, shard_csv, out_path):
         slope, intercept = fit
         tiles.insert(2, stat("memory per sim", f"~{slope:.0f} MB",
                              f"{intercept/1024:.1f} GB base"))
+    if has_infer:
+        best_n = levels[infer_vals.index(max(infer_vals))]
+        tiles.append(stat("edge AI throughput", f"{max(infer_vals):.1f} inf/s",
+                          f"peak at N={best_n}"))
     if shard_rows:
         base = next((int(r["wall_ms"]) for r in shard_rows if int(r["shards"]) == 1), 0)
         best = min(shard_rows, key=lambda r: int(r["wall_ms"]))

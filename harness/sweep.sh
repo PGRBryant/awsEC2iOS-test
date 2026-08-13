@@ -96,6 +96,17 @@ simctl() {
 # byte size of a file, macOS (stat -f) or GNU (stat -c)
 filesize() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || echo 0; }
 
+# ops/sec the app reported inside a sim's sandbox (INFER profile), else 0
+sim_infer_rate() {
+  local dir; dir="$(simctl get_app_container "$1" "$BUNDLE_ID" data 2>/dev/null)"
+  [ -n "$dir" ] && [ -f "$dir/Documents/metrics.json" ] || { echo 0; return; }
+  python3 -c '
+import json,sys
+try: print(json.load(open(sys.argv[1])).get("ops_per_sec", 0))
+except Exception: print(0)
+' "$dir/Documents/metrics.json"
+}
+
 # Newest iPhone SUPPORTED BY the chosen runtime. Pairing matters: an
 # unsupported device+runtime pair creates fine but never boots (found the hard
 # way on a hosted runner: global devicetypes list ends at iPhone 6s Plus, which
@@ -213,7 +224,7 @@ TS="$(date +%Y%m%d-%H%M%S)"
 [ -n "$OUT_DIR" ] || OUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/results/$TS"
 mkdir -p "$OUT_DIR/screens"
 CSV="$OUT_DIR/results.csv"
-echo "level,repeat,device,runtime,profile,boots_ok,installs_ok,launches_ok,renders_ok,boot_wall_ms,mem_used_mb,mem_total_mb,load1,proc_count,swap_used_mb,failure_mode" > "$CSV"
+echo "level,repeat,device,runtime,profile,boots_ok,installs_ok,launches_ok,renders_ok,boot_wall_ms,mem_used_mb,mem_total_mb,load1,proc_count,swap_used_mb,infer_ops,failure_mode" > "$CSV"
 c_info "writing results to $CSV (profile=$PROFILE)"
 
 # the app reads SD_PROFILE from its environment; simctl forwards SIMCTL_CHILD_* vars
@@ -316,16 +327,26 @@ run_trial() {
   [ "$boots_ok" -eq "$n" ] || : # failure already set above
   if [ -z "$failure" ] && [ "$renders_ok" -lt "$n" ]; then failure="partial_render"; fi
 
+  # edge-AI throughput: let the inference loops settle, then sum per-sim rates
+  local infer_ops=0
+  if [ "$PROFILE" = "INFER" ] && [ "$renders_ok" -gt 0 ]; then
+    sleep 10
+    infer_ops="$(
+      for u in "${udids[@]}"; do is_booted "$u" && sim_infer_rate "$u"; done |
+      python3 -c 'import sys; print(round(sum(float(l) for l in sys.stdin if l.strip()), 2))'
+    )"
+  fi
+
   local metrics; metrics="$(sample_metrics)"
-  record_row "$n" "$rep" "$boots_ok" "$installs_ok" "$launches_ok" "$renders_ok" "$boot_wall" "$failure" "$metrics"
+  record_row "$n" "$rep" "$boots_ok" "$installs_ok" "$launches_ok" "$renders_ok" "$boot_wall" "$failure" "$metrics" "$infer_ops"
   teardown "${udids[@]}"
 }
 
 record_row() {
-  # level repeat boots installs launches renders boot_wall failure [metrics]
+  # level repeat boots installs launches renders boot_wall failure [metrics] [infer_ops]
   local metrics="${9:-0,0,0,0,0}"
-  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-    "$1" "$2" "$DEVICE" "$RUNTIME" "$PROFILE" "$3" "$4" "$5" "$6" "$7" "$metrics" "${8:-}" >> "$CSV"
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "$1" "$2" "$DEVICE" "$RUNTIME" "$PROFILE" "$3" "$4" "$5" "$6" "$7" "$metrics" "${10:-0}" "${8:-}" >> "$CSV"
 }
 
 teardown() {
@@ -357,7 +378,7 @@ for n in $LEVELS; do
     # was the last row clean? (renders_ok == n and no failure mode)
     last="$(tail -1 "$CSV")"
     renders="$(echo "$last" | cut -d, -f9)"
-    fmode="$(echo "$last" | cut -d, -f16)"
+    fmode="$(echo "$last" | cut -d, -f17)"
     if [ "$renders" != "$n" ] || [ -n "$fmode" ]; then
       level_clean=0
       c_warn "N=$n trial $rep degraded (renders=$renders/$n, mode='${fmode:-none}')"
