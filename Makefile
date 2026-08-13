@@ -20,8 +20,11 @@ dryrun: ## Exercise the harness with mock simctl — works on any OS, no Xcode
 	./harness/sweep.sh --dry-run --levels "1 2 4" --repeats 1 --boot-timeout 10 --launch-timeout 4
 
 uitest: ## One-time interactivity check on a single simulator (XCUITest)
-	cd app && xcodegen generate && xcodebuild test -project SimDensity.xcodeproj \
-	  -scheme SimDensity -destination 'platform=iOS Simulator,name=iPhone 15' \
+	cd app && xcodegen generate && \
+	  DEV=$$(xcrun simctl list devicetypes --json | python3 -c 'import json,sys; d=json.load(sys.stdin); ph=[t["name"] for t in d["devicetypes"] if "iPhone" in t["name"] and "SE" not in t["name"]]; print(ph[-1])') && \
+	  echo "using device: $$DEV" && \
+	  xcodebuild test -project SimDensity.xcodeproj -scheme SimDensity \
+	  -destination "platform=iOS Simulator,name=$$DEV" \
 	  -derivedDataPath build CODE_SIGNING_ALLOWED=NO
 
 sweep: ## Run the density sweep (override LEVELS / REPEATS)

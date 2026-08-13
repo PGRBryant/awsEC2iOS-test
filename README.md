@@ -64,6 +64,8 @@ Push further once the small runs are green:
 | `harness/sweep.sh` | The experiment. Creates/boots/installs/launches/verifies N sims per trial and writes one CSV row per trial. `--dry-run` swaps in the mock. |
 | `harness/mock/simctl` | Mock `simctl` with fault injection (`MOCK_*` env vars) so the sweep logic is testable anywhere, including Linux CI. |
 | `harness/analyze.py` | Headline numbers, RAM model + per-instance ceiling predictions, `--report` markdown (+ charts if matplotlib is present). |
+| `harness/compare.py` | Cross-machine comparison: `compare.py laptop=a.csv ec2=b.csv` — one row per machine with measured vs predicted ceilings. |
+| `ROADMAP.md` | Phase-by-phase deliverables ledger with live status. |
 | `app/UITests/` | One-assertion XCUITest (`make uitest`) — single-sim interactivity check before a paid run. |
 | `aws/` | Provisioning runbook for the EC2 Mac dedicated host (Phase 1). |
 

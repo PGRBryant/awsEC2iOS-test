@@ -1,0 +1,84 @@
+# CI: proves the harness on every PR without owning a Mac.
+#  - dryrun-linux: sweep control flow + fault injection against the mock (fast gate)
+#  - smoke-macos:  the REAL thing — xcodebuild + xcrun simctl on a GitHub-hosted
+#    Mac, mini 1-2-3 sweep, analyzer + report uploaded as artifacts.
+# Hosted macOS runners are free for public repos. The mini sweep also yields a
+# real (if small-RAM) MB-per-sim datapoint for the EC2 predictions.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  dryrun-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clean sweep against mock simctl
+        run: |
+          ./harness/sweep.sh --dry-run --levels "1 2 4" --repeats 1 \
+            --boot-timeout 10 --launch-timeout 4 --out results/clean
+          # every level must be fully clean
+          ! grep -E ',(boot_timeout|no_render|partial_render|create|install|launch)$' results/clean/results.csv
+
+      - name: Fault injection — boot hang is detected
+        run: |
+          rm -rf /tmp/simdensity-mock
+          MOCK_BOOT_HANG_AT=2 ./harness/sweep.sh --dry-run --levels "4" --repeats 1 \
+            --boot-timeout 6 --launch-timeout 4 --out results/hang
+          grep -q 'boot_timeout' results/hang/results.csv
+
+      - name: Fault injection — blank render is detected
+        run: |
+          rm -rf /tmp/simdensity-mock
+          MOCK_RENDER_FAIL_AT=1 ./harness/sweep.sh --dry-run --levels "2" --repeats 1 \
+            --boot-timeout 6 --launch-timeout 4 --out results/blank
+          grep -Eq 'no_render|partial_render' results/blank/results.csv
+
+      - name: Analyzer + report run on dry-run data
+        run: |
+          python3 harness/analyze.py results/clean/results.csv --report results/clean/report.md
+          test -s results/clean/report.md
+
+  smoke-macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Bootstrap (real xcodebuild)
+        run: ./scripts/bootstrap.sh
+
+      - name: Mini sweep (real simctl, N = 1 2 3)
+        run: |
+          # generous boot deadline: first boot of a runtime on a cold runner is slow
+          ./harness/sweep.sh \
+            --app app/build/Build/Products/Debug-iphonesimulator/SimDensity.app \
+            --levels "1 2 3" --repeats 1 --boot-timeout 420 --out results/smoke
+
+      - name: Analyze + report
+        if: always()
+        run: |
+          test -f results/smoke/results.csv || { echo "no results produced"; exit 1; }
+          python3 harness/analyze.py results/smoke/results.csv --report results/smoke/report.md \
+            | tee results/smoke/summary.txt
+          # smoke must be fully clean at these tiny levels
+          ! grep -E ',(boot_timeout|no_render|partial_render|create|install|launch)$' results/smoke/results.csv
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-macos-results
+          path: results/

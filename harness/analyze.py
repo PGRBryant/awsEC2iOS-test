@@ -31,6 +31,23 @@ def load(path):
         return list(csv.DictReader(f))
 
 
+def headline(rows):
+    """(reliable_working_point, hard_ceiling) from result rows — the shared
+    definition used by this summary and by compare.py."""
+    by_level = defaultdict(list)
+    for r in rows:
+        by_level[int(r["level"])].append(r)
+    reliable = None
+    hard_ceiling = None
+    for n in sorted(by_level):
+        trs = by_level[n]
+        if all(int(r["renders_ok"]) == n and not r["failure_mode"] for r in trs):
+            reliable = n
+        if hard_ceiling is None and any(int(r["boots_ok"]) < n for r in trs):
+            hard_ceiling = n
+    return reliable, hard_ceiling
+
+
 def ram_model(rows):
     """Least-squares fit of host memory vs actually-booted sims.
 
@@ -93,8 +110,7 @@ def main():
         by_level[int(r["level"])].append(r)
 
     levels = sorted(by_level)
-    reliable = None       # largest fully-clean N
-    hard_ceiling = None   # smallest N with a boot failure
+    reliable, hard_ceiling = headline(rows)
 
     print(f"\n  Sweep summary  ({path})")
     print(f"  device={rows[0]['device']}  runtime={rows[0]['runtime'].split('.')[-1]}")
@@ -114,12 +130,6 @@ def main():
         modes = sorted({r["failure_mode"] for r in trs if r["failure_mode"]})
         fully_clean = all(int(r["renders_ok"]) == n and not r["failure_mode"] for r in trs)
         any_boot_fail = any(int(r["boots_ok"]) < n for r in trs)
-
-        if fully_clean:
-            reliable = n
-        if hard_ceiling is None and any_boot_fail:
-            hard_ceiling = n
-
         flag = " " if fully_clean else ("!" if any_boot_fail else "~")
         print(f" {flag}{n:>4} {t:>7} {boot_rate:>6.0f}% {render_rate:>7.0f}% "
               f"{wall_s:>12.1f} {peak_mem:>12.1f} {','.join(modes) or '-':>12}")
