@@ -60,7 +60,11 @@ xcb() {
 now_ms() { python3 -c 'import time;print(int(time.time()*1000))'; }
 
 [ -f "$MANIFEST" ] || { c_err "manifest not found: $MANIFEST"; exit 2; }
-mapfile -t TESTS < <(grep -v '^\s*$' "$MANIFEST")
+# no mapfile: macOS ships bash 3.2
+TESTS=()
+while IFS= read -r _line; do
+  [ -n "$_line" ] && TESTS+=("$_line")
+done < "$MANIFEST"
 TOTAL="${#TESTS[@]}"
 [ "$TOTAL" -gt 0 ] || { c_err "manifest is empty"; exit 2; }
 

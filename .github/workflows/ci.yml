@@ -61,7 +61,9 @@ jobs:
 
   smoke-macos:
     runs-on: macos-15
-    timeout-minutes: 45
+    # ANIMATE-profile sims boot slowly on 3-core runners (~30 min for the sweep
+    # alone — that slowness is real load-profile data) + the shard run after it
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
