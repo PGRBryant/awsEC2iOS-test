@@ -64,6 +64,8 @@ jobs:
     # ANIMATE-profile sims boot slowly on 3-core runners (~30 min for the sweep
     # alone — that slowness is real load-profile data) + the shard run after it
     timeout-minutes: 75
+    permissions:
+      contents: write   # publish results to the ci-results branch
     steps:
       - uses: actions/checkout@v4
 
@@ -113,3 +115,23 @@ jobs:
         with:
           name: smoke-macos-results
           path: results/
+
+      # Actions artifact downloads redirect to blob storage some networks can't
+      # reach; a plain git branch is fetchable anywhere github.com is. Screens
+      # are excluded to keep the branch tiny; the run artifact keeps everything.
+      - name: Publish results to ci-results branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          d=$(mktemp -d)
+          rsync -a --exclude 'screens' results/ "$d/results/" 2>/dev/null || cp -R results "$d/results"
+          cd "$d"
+          git init -q -b ci-results
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "run ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA} · $(date -u +%FT%TZ)" > RUN.txt
+          git add -A
+          git commit -qm "CI results: run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-results
