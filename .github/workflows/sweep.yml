@@ -12,8 +12,8 @@ on:
         description: 'Trials per level'
         default: '3'
       device:
-        description: 'Simulator device type'
-        default: 'iPhone 15'
+        description: 'Simulator device type (auto = newest iPhone)'
+        default: 'auto'
 
 jobs:
   sweep:

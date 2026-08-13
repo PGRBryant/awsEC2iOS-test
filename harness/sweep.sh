@@ -13,7 +13,7 @@ set -uo pipefail
 # defaults / args
 # ---------------------------------------------------------------------------
 LEVELS="1 2 4 8 16"           # values of N to sweep
-DEVICE="iPhone 15"            # device type held fixed across the sweep
+DEVICE=""                     # device type; empty/"auto" = newest iPhone available
 RUNTIME=""                   # iOS runtime id; auto-detected (newest) if empty
 APP=""                       # path to prebuilt .app (from bootstrap.sh)
 REPEATS=3                     # trials per level (for variance)
@@ -32,7 +32,7 @@ Usage: sweep.sh --app <path-to-.app> [options]
 
   --app PATH           Prebuilt .app to install (required). See scripts/bootstrap.sh
   --levels "1 2 4 8"   Space-separated N values to sweep      (default: "$LEVELS")
-  --device NAME        Simulator device type                  (default: "$DEVICE")
+  --device NAME        Simulator device type      (default: auto — newest iPhone)
   --runtime ID         iOS runtime id (e.g. com.apple.CoreSimulator.SimRuntime.iOS-17-5)
                        Auto-detects newest available iOS if omitted.
   --repeats N          Trials per level                       (default: $REPEATS)
@@ -89,6 +89,16 @@ simctl() {
 
 # byte size of a file, macOS (stat -f) or GNU (stat -c)
 filesize() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || echo 0; }
+
+# Newest iPhone device-type identifier (device availability varies by Xcode).
+detect_device() {
+  simctl list devicetypes --json | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+ph=[t for t in d.get("devicetypes",[]) if "iPhone" in t.get("name","") and "SE" not in t.get("name","")]
+print(ph[-1]["identifier"] if ph else "")
+'
+}
 
 # Newest available iOS runtime id, via python3 JSON parse (robust vs text scraping).
 detect_runtime() {
@@ -157,6 +167,13 @@ if [ -z "$RUNTIME" ]; then
   [ -n "$RUNTIME" ] || { c_err "no available iOS runtime found (open Xcode > Settings > Platforms)"; exit 1; }
 fi
 c_info "runtime: $RUNTIME"
+
+[ "$DEVICE" = "auto" ] && DEVICE=""
+if [ -z "$DEVICE" ]; then
+  DEVICE="$(detect_device)"
+  [ -n "$DEVICE" ] || { c_err "no iPhone device type found via simctl"; exit 1; }
+fi
+c_info "device: $DEVICE"
 
 TS="$(date +%Y%m%d-%H%M%S)"
 [ -n "$OUT_DIR" ] || OUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/results/$TS"
