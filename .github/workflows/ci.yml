@@ -84,12 +84,13 @@ jobs:
       - name: Bootstrap (real xcodebuild)
         run: ./scripts/bootstrap.sh
 
-      - name: Mini sweep (real simctl, N = 1 2 3, INFER profile)
+      - name: Mini sweep (real simctl, N = 1 2, INFER profile)
         run: |
-          # generous boot deadline: first boot of a runtime on a cold runner is slow
+          # CI validates the pipeline; deep N-curves are the EC2 box's job.
+          # N=1,2 fits every runner speed inside the timeout (N=3 didn't: run 12).
           ./harness/sweep.sh \
             --app app/build/Build/Products/Debug-iphonesimulator/SimDensity.app \
-            --levels "1 2 3" --repeats 1 --boot-timeout 420 \
+            --levels "1 2" --repeats 1 --boot-timeout 420 \
             --profile INFER --sample-interval 2 --out results/smoke
 
       - name: Analyze + report + dashboard
