@@ -14,7 +14,106 @@ at ~24h. Terminating the *instance* stops instance charges immediately, but the
 
 ---
 
-## Step 0 — quota (do this days ahead; it's the only real lead-time item)
+## Step 0 — grant the harness AWS access (one-time, console)
+
+The scripts here need an identity that's allowed to spin up EC2 Mac hardware.
+Create a dedicated IAM user with a least-privilege policy — **not** your root
+account, and no broader than the actions the scripts actually call.
+
+### 0.1 Create the policy
+
+**Console → IAM → Policies → Create policy → JSON**, paste this, name it
+`SimDensityProvisioning`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DiscoverAndDescribe",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeHosts",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceTypeOfferings",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeKeyPairs",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeImages",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProvisionMacHost",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AllocateHosts",
+        "ec2:ReleaseHosts",
+        "ec2:RunInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateTags"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "us-east-1" }
+      }
+    },
+    {
+      "Sid": "QuotaAndBudget",
+      "Effect": "Allow",
+      "Action": [
+        "servicequotas:ListServiceQuotas",
+        "servicequotas:GetServiceQuota",
+        "servicequotas:RequestServiceQuotaIncrease",
+        "budgets:ViewBudget",
+        "budgets:ModifyBudget"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Change the `aws:RequestedRegion` value if you provision elsewhere. The
+mutating EC2 actions are region-locked; the describe/SSM reads are not
+(several are global or needed for discovery).
+
+### 0.2 Create the user and attach the policy
+
+1. **Console → IAM → Users → Create user** — name it `simdensity-provisioner`.
+   Leave **"Provide user access to the AWS Management Console" unchecked**
+   (CLI-only identity; no password, no console login).
+2. **Permissions → Attach policies directly** → select `SimDensityProvisioning`
+   → **Create user**.
+
+### 0.3 Create an access key and configure the CLI
+
+1. Open the user → **Security credentials → Create access key** → choose
+   **Command Line Interface (CLI)** → acknowledge → **Create**.
+2. On the machine that will run these scripts:
+
+```bash
+aws configure          # paste the Access key ID and Secret access key
+# Default region: us-east-1 (match the policy's region condition)
+aws sts get-caller-identity   # should print the simdensity-provisioner ARN
+```
+
+⚠️ The secret key is shown **once** — store it in a password manager. Never
+commit it, and never paste it into a chat or issue; anything that leaks it can
+allocate 24-hour-minimum Mac hardware on your bill. If it ever leaks:
+IAM → the user → Security credentials → **Deactivate** the key immediately.
+
+### 0.4 Create the SSH key pair (the scripts assume one exists)
+
+**Console → EC2 → Key pairs → Create key pair** — name it (e.g.
+`simdensity`), type ED25519, download the `.pem`, `chmod 400` it. Pass the
+name to `provision.sh` via `KEY_NAME=simdensity`.
+
+## Step 1 — quota (do this days ahead; it's the only real lead-time item)
 
 New accounts almost always have a **quota of 0** for Mac Dedicated Hosts, and the
 increase can take a day or more. Request it now, before you plan to run.
@@ -35,7 +134,7 @@ Or in the console: **Service Quotas → Amazon EC2 → "Running Dedicated
 `<family>` Hosts" → Request increase**. Confirm the *Applied* value is ≥ 1
 before provisioning.
 
-## Step 1 — cost guardrails (before allocating anything)
+## Step 2 — cost guardrails (before allocating anything)
 
 ```bash
 # Billing alarms live in us-east-1 regardless of where the host runs.
@@ -45,7 +144,7 @@ aws budgets create-budget --account-id "$(aws sts get-caller-identity --query Ac
 
 Also set a calendar reminder for **24h after allocation** to release the host.
 
-## Step 2 — provision
+## Step 3 — provision
 
 ```bash
 export KEY_NAME=my-ec2-keypair       # an existing EC2 key pair you hold the .pem for
@@ -66,7 +165,7 @@ export REGION=us-east-1
 uses a default-VPC subnet, opens SSH from **your IP only**, allocates the host,
 launches the instance, and prints the SSH command. Ids are saved to `aws/.state`.
 
-## Step 3 — connect & bootstrap the harness
+## Step 4 — connect & bootstrap the harness
 
 First boot resizes APFS and can take several minutes.
 
@@ -87,7 +186,7 @@ Copy results back before releasing the host:
 scp -r ec2-user@<public-ip>:simdensity/results ./results-ec2
 ```
 
-## Step 4 — release (stop billing)
+## Step 5 — release (stop billing)
 
 ```bash
 ./aws/teardown.sh
