@@ -11,7 +11,7 @@ on:
         description: 'What to do'
         type: choice
         required: true
-        options: [report, clean, resize-disk]
+        options: [report, clean, resize-disk, install-runner-daemon]
 
 jobs:
   maintain:
@@ -76,16 +76,51 @@ jobs:
           APFSCONT=$(diskutil list physical external | grep Apple_APFS | tr -s ' ' | cut -d' ' -f8)
           # EBS size changes can take minutes to reach the instance; poll until
           # the kernel sees a disk larger than the APFS container (or give up)
+          ok=0
           for i in $(seq 1 20); do
             yes | sudo diskutil repairDisk "$PDISK" || true
             if sudo diskutil apfs resizeContainer "$APFSCONT" 0; then
-              break
+              ok=1; break
             fi
             echo "container already fills the disk the kernel can see — waiting for EBS grow to propagate ($i/20)"
             sleep 30
           done
           diskutil list physical external
           df -h /
+          [ "$ok" -eq 1 ] || { echo "::error::kernel never saw a larger disk — on EC2 Mac a REBOOT is usually required after growing the EBS volume"; exit 1; }
+
+      # The runner currently lives in a nohup'd process that dies on reboot,
+      # and svc.sh LaunchAgents need a GUI login this headless box lacks. A
+      # system LaunchDaemon running as ec2-user survives reboots. Written but
+      # NOT started now (a second live runner would collide with the one
+      # executing this job) — it activates at next boot via RunAtLoad.
+      - name: Install boot-persistent runner daemon
+        if: inputs.action == 'install-runner-daemon'
+        run: |
+          sudo tee /Library/LaunchDaemons/com.simdensity.runner.plist >/dev/null <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>Label</key><string>com.simdensity.runner</string>
+            <key>UserName</key><string>ec2-user</string>
+            <key>WorkingDirectory</key><string>/Users/ec2-user/actions-runner</string>
+            <key>ProgramArguments</key>
+            <array>
+              <string>/Users/ec2-user/actions-runner/run.sh</string>
+            </array>
+            <key>RunAtLoad</key><true/>
+            <key>KeepAlive</key><true/>
+            <key>ThrottleInterval</key><integer>30</integer>
+            <key>StandardOutPath</key><string>/Users/ec2-user/runner-daemon.log</string>
+            <key>StandardErrorPath</key><string>/Users/ec2-user/runner-daemon.log</string>
+          </dict>
+          </plist>
+          PLIST
+          sudo chown root:wheel /Library/LaunchDaemons/com.simdensity.runner.plist
+          sudo chmod 644 /Library/LaunchDaemons/com.simdensity.runner.plist
+          plutil -lint /Library/LaunchDaemons/com.simdensity.runner.plist
+          echo "daemon installed — activates at next boot (RunAtLoad)"
 
       - name: Publish rescued results to ec2-results branch
         if: always()
