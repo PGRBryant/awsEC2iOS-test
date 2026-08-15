@@ -16,8 +16,8 @@ on:
         required: true
         options: [status, provision, teardown]
       instance_type:
-        description: 'Mac instance type (provision only)'
-        default: 'mac2-m2.metal'
+        description: 'Mac instance type (provision only) — must match an approved quota family'
+        default: 'mac2-m2pro.metal'
       key_name:
         description: 'EC2 key pair name (provision only)'
         default: 'simdensity'
