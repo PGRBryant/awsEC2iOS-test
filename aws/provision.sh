@@ -142,6 +142,26 @@ fi
 log "Dedicated Host: $HOST_ID in $AZ"
 printf 'HOST_ID=%s\nREGION=%s\nAZ=%s\nINSTANCE_TYPE=%s\n' "$HOST_ID" "$REGION" "$AZ" "$INSTANCE_TYPE" > "$STATE_FILE"
 
+# --- wait for the host to finish provisioning ---
+# A freshly allocated Mac host sits in 'pending' (sometimes for a long while)
+# and run-instances against a pending host fails with a misleading
+# InvalidHostId "does not exist". Only 'available' accepts launches.
+HOST_WAIT_SECS="${HOST_WAIT_SECS:-2400}"
+waited=0
+while :; do
+  host_state="$(aws_ ec2 describe-hosts --host-ids "$HOST_ID" \
+    --query 'Hosts[0].State' --output text 2>/dev/null || echo unknown)"
+  case "$host_state" in
+    available) log "host $HOST_ID is available"; break ;;
+    pending|under-assessment|unknown) ;;
+    *) die "host $HOST_ID entered state '$host_state' — cannot launch onto it. Check the console; teardown if it's dead." ;;
+  esac
+  [ "$waited" -lt "$HOST_WAIT_SECS" ] || \
+    die "host $HOST_ID still '$host_state' after $((HOST_WAIT_SECS/60)) min. It stays allocated and state is saved — re-run provision later to launch onto it."
+  log "host state: $host_state — waiting for 'available' (${waited}s elapsed)"
+  sleep 30; waited=$((waited+30))
+done
+
 # --- default-VPC subnet in the winning AZ, if not supplied ---
 if [ -z "$SUBNET_ID" ]; then
   SUBNET_ID="$(aws_ ec2 describe-subnets \

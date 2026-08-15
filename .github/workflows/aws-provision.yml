@@ -39,7 +39,9 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # generous: a fresh Mac Dedicated Host can sit 'pending' for a long while
+    # before it accepts launches, and provision.sh now waits for 'available'
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
