@@ -24,6 +24,9 @@ on:
       ssh_cidr:
         description: 'CIDR allowed to SSH, e.g. 203.0.113.7/32 (provision only)'
         default: ''
+      az:
+        description: 'Pin one AZ (provision only); blank = hunt all AZs for capacity'
+        default: ''
 
 permissions:
   id-token: write   # mint the OIDC token
@@ -93,6 +96,7 @@ jobs:
           KEY_NAME: ${{ inputs.key_name }}
           INSTANCE_TYPE: ${{ inputs.instance_type }}
           SSH_CIDR: ${{ inputs.ssh_cidr }}
+          AZ: ${{ inputs.az }}
           REGION: us-east-1
         run: |
           test -n "$SSH_CIDR" || { echo "ssh_cidr is required for provision (the runner's own IP is useless to you)"; exit 1; }

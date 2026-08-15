@@ -72,22 +72,50 @@ AMI_ID="$(aws_ ssm get-parameters --names "$SSM_PATH" \
   die "no AMI for macOS '$MACOS' in $REGION. List options: $0 --list-macos"
 log "AMI: $AMI_ID"
 
-# --- pick an AZ that actually offers this Mac type ---
-if [ -z "$AZ" ]; then
-  AZ="$(aws_ ec2 describe-instance-type-offerings --location-type availability-zone \
-        --filters "Name=instance-type,Values=$INSTANCE_TYPE" \
-        --query 'InstanceTypeOfferings[0].Location' --output text)"
-  [ -n "$AZ" ] && [ "$AZ" != "None" ] || die "$INSTANCE_TYPE not offered in any AZ of $REGION"
+# --- allocate the Dedicated Host, hunting across AZs (24h clock starts) ---
+# Mac capacity is scarce and per-AZ (quota is permission, not inventory), so
+# a fixed AZ frequently hits InsufficientHostCapacity while a neighbor has
+# stock. Try every AZ offering the type unless --az pinned one.
+if [ -n "$AZ" ]; then
+  CANDIDATE_AZS="$AZ"
+else
+  CANDIDATE_AZS="$(aws_ ec2 describe-instance-type-offerings --location-type availability-zone \
+      --filters "Name=instance-type,Values=$INSTANCE_TYPE" \
+      --query 'InstanceTypeOfferings[].Location' --output text | tr '\t' '\n' | sort)"
+  [ -n "$CANDIDATE_AZS" ] || die "$INSTANCE_TYPE not offered in any AZ of $REGION"
 fi
-log "availability zone: $AZ"
+warn "allocating Dedicated Host — this starts the 24-HOUR minimum billing window."
+HOST_ID=""
+for candidate in $CANDIDATE_AZS; do
+  log "trying $candidate..."
+  set +e
+  alloc_out="$(aws_ ec2 allocate-hosts --instance-type "$INSTANCE_TYPE" \
+    --availability-zone "$candidate" --auto-placement on --quantity 1 \
+    --tag-specifications 'ResourceType=dedicated-host,Tags=[{Key=project,Value=simdensity}]' \
+    --query 'HostIds[0]' --output text 2>&1)"
+  alloc_rc=$?
+  set -e
+  if [ "$alloc_rc" -eq 0 ] && [ -n "$alloc_out" ] && [ "$alloc_out" != "None" ]; then
+    HOST_ID="$alloc_out"; AZ="$candidate"; break
+  fi
+  case "$alloc_out" in
+    *InsufficientHostCapacity*|*Insufficient\ capacity*)
+      warn "no $INSTANCE_TYPE capacity in $candidate right now" ;;
+    *) die "allocate-hosts failed in $candidate: $alloc_out" ;;
+  esac
+done
+[ -n "$HOST_ID" ] || die "no $INSTANCE_TYPE capacity in ANY AZ of $REGION right now. \
+Mac capacity churns hourly — re-run later (off-peak US hours are best)."
+log "Dedicated Host: $HOST_ID in $AZ"
+printf 'HOST_ID=%s\nREGION=%s\nAZ=%s\nINSTANCE_TYPE=%s\n' "$HOST_ID" "$REGION" "$AZ" "$INSTANCE_TYPE" > "$STATE_FILE"
 
-# --- default-VPC subnet in that AZ, if not supplied ---
+# --- default-VPC subnet in the winning AZ, if not supplied ---
 if [ -z "$SUBNET_ID" ]; then
   SUBNET_ID="$(aws_ ec2 describe-subnets \
     --filters "Name=availability-zone,Values=$AZ" "Name=default-for-az,Values=true" \
     --query 'Subnets[0].SubnetId' --output text)"
   [ -n "$SUBNET_ID" ] && [ "$SUBNET_ID" != "None" ] || \
-    die "no default subnet in $AZ — pass --subnet <id>"
+    die "no default subnet in $AZ — host $HOST_ID is allocated; pass --subnet and rerun, or teardown"
 fi
 log "subnet: $SUBNET_ID"
 
@@ -116,16 +144,6 @@ if [ -z "$SG_ID" ]; then
     --protocol tcp --port 22 --cidr "${MYIP}/32" >/dev/null 2>&1 || true
   log "SSH allowed from ${MYIP}/32 via $SG_ID"
 fi
-
-# --- allocate the Dedicated Host (24h clock starts) ---
-warn "allocating Dedicated Host — this starts the 24-HOUR minimum billing window."
-HOST_ID="$(aws_ ec2 allocate-hosts --instance-type "$INSTANCE_TYPE" \
-  --availability-zone "$AZ" --auto-placement on --quantity 1 \
-  --tag-specifications 'ResourceType=dedicated-host,Tags=[{Key=project,Value=simdensity}]' \
-  --query 'HostIds[0]' --output text)" \
-  || die "allocate-hosts failed — often a quota of 0 (see aws/README.md) or no Mac capacity in $AZ"
-log "Dedicated Host: $HOST_ID"
-printf 'HOST_ID=%s\nREGION=%s\nAZ=%s\nINSTANCE_TYPE=%s\n' "$HOST_ID" "$REGION" "$AZ" "$INSTANCE_TYPE" > "$STATE_FILE"
 
 # --- launch the Mac instance onto the host ---
 log "launching instance onto host..."
