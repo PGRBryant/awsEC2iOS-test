@@ -368,7 +368,20 @@ teardown() {
 # sweep
 # ---------------------------------------------------------------------------
 c_info "device=$DEVICE  levels=[$LEVELS]  repeats=$REPEATS"
+# Disk is a real wall: booted sims materialize ~0.5-1 GB each, and a full
+# disk kills the runner itself (learned on EC2: died ugly at N=16, results
+# unpublished). Below the floor, record 'disk' as the failure mode and stop
+# gracefully so the CSV and publish steps still happen.
+DISK_FLOOR_GB="${DISK_FLOOR_GB:-8}"
 for n in $LEVELS; do
+  if [ "$DRY_RUN" -eq 0 ]; then
+    free_gb="$(df -g / 2>/dev/null | awk 'NR==2{print $4}')"
+    if [ -n "$free_gb" ] && [ "$free_gb" -lt "$DISK_FLOOR_GB" ]; then
+      c_err "only ${free_gb}GB free (< ${DISK_FLOOR_GB}GB floor) — recording disk wall at N=$n and stopping"
+      echo "$n,0,$DEVICE,$RUNTIME,$PROFILE,0,0,0,0,0,$(sample_metrics),0,disk" >> "$CSV"
+      break
+    fi
+  fi
   level_clean=1
   for rep in $(seq 1 "$REPEATS"); do
     c_info "level N=$n  trial $rep/$REPEATS"

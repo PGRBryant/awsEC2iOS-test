@@ -1,0 +1,95 @@
+# Housekeeping for the self-hosted EC2 Mac runner, driven by dispatch so the
+# box never needs SSH. Born of the run-day disk-full incident: rescues any
+# unpublished results stranded in _work, reports what is eating the disk,
+# then cleans the known space hogs.
+name: EC2 maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to do'
+        type: choice
+        required: true
+        options: [report, clean]
+
+jobs:
+  maintain:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 30
+    permissions:
+      contents: write   # rescue publishing to the ec2-results branch
+    steps:
+      # BEFORE checkout: checkout's git-clean would delete stranded untracked
+      # results from a previously crashed run in this same _work directory.
+      - name: Rescue stranded results (pre-checkout)
+        run: |
+          set -x
+          if [ -d "$GITHUB_WORKSPACE/results" ]; then
+            tar czf "$HOME/rescued-results.tgz" -C "$GITHUB_WORKSPACE" results
+            echo "rescued $(du -h "$HOME/rescued-results.tgz" | cut -f1)"
+          else
+            echo "nothing to rescue"
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Disk report (before)
+        run: |
+          df -h /
+          echo "== the usual suspects =="
+          du -sh /Applications/Xcode*.app 2>/dev/null || true
+          du -sh "$HOME"/Xcode*.xip 2>/dev/null || true
+          du -sh "$HOME/Library/Developer/CoreSimulator" 2>/dev/null || true
+          du -sh "$HOME/Library/Developer/CoreSimulator/Caches" 2>/dev/null || true
+          du -sh "$HOME/Library/Developer/CoreSimulator/Devices" 2>/dev/null || true
+          du -sh "$HOME/Library/Logs/CoreSimulator" 2>/dev/null || true
+          du -sh "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null || true
+          du -sh "$HOME/Library/Caches/Homebrew" 2>/dev/null || true
+          du -sh "$HOME/actions-runner/_work" 2>/dev/null || true
+          du -sh "$HOME/actions-runner/_diag" 2>/dev/null || true
+          xcrun simctl list devices 2>/dev/null | grep -c 'iPhone' || true
+
+      - name: Clean
+        if: inputs.action == 'clean'
+        run: |
+          set -x
+          rm -f "$HOME"/Xcode*.xip
+          xcrun simctl shutdown all 2>/dev/null || true
+          xcrun simctl delete all 2>/dev/null || true
+          rm -rf "$HOME/Library/Logs/CoreSimulator"/*
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"/*
+          # dyld caches under CoreSimulator/Caches are NOT removed: they cost
+          # GBs once but rebuilding them makes every subsequent boot crawl
+          brew cleanup -s 2>/dev/null || true
+          rm -rf "$HOME/Library/Caches/Homebrew"/* 2>/dev/null || true
+
+      - name: Publish rescued results to ec2-results branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          test -f "$HOME/rescued-results.tgz" || { echo "no rescue payload"; exit 0; }
+          d=$(mktemp -d) && cd "$d"
+          git init -q -b ec2-results
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q "$url" ec2-results 2>/dev/null; then
+            git checkout -q FETCH_HEAD
+            git checkout -q -b keep && git branch -q -M ec2-results
+          fi
+          dest="runs/rescue-$(date -u +%Y%m%dT%H%M%SZ)"
+          mkdir -p "$dest"
+          tar xzf "$HOME/rescued-results.tgz" -C "$dest"
+          rm -rf "$dest"/results/*/screens 2>/dev/null || true
+          echo "rescued by maintenance run ${GITHUB_RUN_NUMBER} · $(date -u +%FT%TZ)" > "$dest/RUN.txt"
+          git add -A
+          git commit -qm "Rescued stranded results (maintenance run ${GITHUB_RUN_NUMBER})"
+          git push -q "$url" ec2-results
+          rm -f "$HOME/rescued-results.tgz"
+
+      - name: Disk report (after)
+        if: always()
+        run: df -h /
