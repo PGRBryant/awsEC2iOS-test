@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# mock xcodebuild — stands in for `xcodebuild test-without-building` in
+# shard.sh --dry-run. Sleeps proportionally to the number of -only-testing
+# arguments (MOCK_SECS_PER_TEST each, default 0.3), so the parallel-shard
+# orchestration and the speedup math are testable without a Mac.
+# MOCK_XCB_FAIL_SHARD=<n>: exit 65 when handling exactly n tests (flake sim).
+set -uo pipefail
+
+PER="${MOCK_SECS_PER_TEST:-0.3}"
+FAIL_AT="${MOCK_XCB_FAIL_SHARD:-0}"
+
+count=0
+for a in "$@"; do
+  case "$a" in -only-testing:*) count=$((count+1));; esac
+done
+
+python3 -c "import time; time.sleep($count * $PER)"
+echo "mock xcodebuild: ran $count test(s)"
+
+if [ "$FAIL_AT" -gt 0 ] && [ "$count" -eq "$FAIL_AT" ]; then
+  echo "mock xcodebuild: injected failure" >&2
+  exit 65
+fi

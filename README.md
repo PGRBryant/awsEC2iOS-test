@@ -48,6 +48,34 @@ ceiling for every EC2 Mac instance type — so even a sweep on a small machine
 (or your laptop) gives a directional answer for the big ones before you pay
 for a Dedicated Host.
 
+## The developer-realism layer
+
+Density is the capacity story; what a phone team actually buys cloud sims for
+is **faster PR feedback**. Two additions make the demo mirror that use case:
+
+```bash
+make sweep PROFILE=ANIMATE        # density under load: IDLE | ANIMATE | SCROLL | INFER
+make bootstrap-tests && make shard SHARDS="1 2 4"   # suite wall-time vs shard count
+make dashboard                    # self-contained HTML dashboard from the results
+```
+
+`PROFILE=INFER` is the edge-AI case: each sim runs a continuous loop of real
+on-device neural inference (Vision OCR on generated images — the models ship
+inside iOS, so nothing is bundled or downloaded). Per-sim inferences/sec are
+written to the app sandbox and collected via `simctl get_app_container`, giving
+the sweep an **aggregate edge-AI throughput vs N** curve: does total inference
+scale with more sims, plateau at core saturation, or collapse?
+
+- **Load profiles** — the app renders realistic work (animation churn,
+  auto-scrolling lists) selected via `SD_PROFILE`, so the ceiling is measured
+  under app-like load, not an idle screen.
+- **Sharding** — `shard.sh` splits the 12-test UI suite across N parallel
+  simulators; `speedup.csv` captures the wall-time curve, the number that
+  translates density into developer minutes saved.
+- **Dashboard** — `dashboard.py` renders everything (curves, RAM fit, per-second
+  resource timelines from `timeline.csv`, speedup vs ideal) into one
+  dependency-free HTML file; CI uploads it as an artifact on every PR.
+
 Push further once the small runs are green:
 
 ```bash
@@ -65,6 +93,8 @@ Push further once the small runs are green:
 | `harness/mock/simctl` | Mock `simctl` with fault injection (`MOCK_*` env vars) so the sweep logic is testable anywhere, including Linux CI. |
 | `harness/analyze.py` | Headline numbers, RAM model + per-instance ceiling predictions, `--report` markdown (+ charts if matplotlib is present). |
 | `harness/compare.py` | Cross-machine comparison: `compare.py laptop=a.csv ec2=b.csv` — one row per machine with measured vs predicted ceilings. |
+| `harness/shard.sh` | The throughput experiment: splits the UI-test suite across N parallel sims and measures suite wall-time vs N (`speedup.csv`). `--dry-run` mocks both simctl and xcodebuild. |
+| `harness/dashboard.py` | Self-contained HTML dashboard (inline SVG, no deps, light+dark): stat tiles, density curves, RAM fit, resource timelines, speedup curve, trials table. |
 | `ROADMAP.md` | Phase-by-phase deliverables ledger with live status. |
 | `app/UITests/` | One-assertion XCUITest (`make uitest`) — single-sim interactivity check before a paid run. |
 | `aws/` | Provisioning runbook for the EC2 Mac dedicated host (Phase 1). |

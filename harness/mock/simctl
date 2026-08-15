@@ -88,6 +88,24 @@ JSON
       head -c 20000 /dev/urandom > "$path" # rendered screen: real-sized PNG-ish blob
     fi
     ;;
+  get_app_container)
+    # get_app_container UDID BUNDLE data -> path to a fake data container
+    # carrying metrics.json with a synthetic inference rate that degrades as
+    # more sims are booted (mimics CPU contention).
+    u="$1"
+    is_ready "$u" || { echo "mock: sim not booted" >&2; exit 1; }
+    booted=0
+    for f in "$STATE"/*; do
+      [ -f "$f" ] || continue
+      is_ready "$(basename "$f")" && booted=$((booted+1))
+    done
+    [ "$booted" -gt 0 ] || booted=1
+    dir="$STATE/containers/$u"
+    mkdir -p "$dir/Documents"
+    python3 -c "print('{\"ops_per_sec\": %.3f, \"total\": 100}' % (9.0 / $booted))" \
+      > "$dir/Documents/metrics.json"
+    echo "$dir"
+    ;;
   shutdown)
     u="$1"; [ -f "$STATE/$u" ] && setf "$u" status shutdown
     ;;

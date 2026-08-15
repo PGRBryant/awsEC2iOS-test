@@ -4,7 +4,7 @@ APP := app/build/Build/Products/Debug-iphonesimulator/SimDensity.app
 LEVELS ?= 1 2 4 8
 REPEATS ?= 3
 
-.PHONY: help bootstrap sweep smoke dryrun uitest analyze clean
+.PHONY: help bootstrap bootstrap-tests sweep smoke dryrun uitest shard dashboard analyze clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -27,11 +27,26 @@ uitest: ## One-time interactivity check on a single simulator (XCUITest)
 	  -destination "platform=iOS Simulator,name=$$DEV" \
 	  -derivedDataPath build CODE_SIGNING_ALLOWED=NO
 
-sweep: ## Run the density sweep (override LEVELS / REPEATS)
-	./harness/sweep.sh --app "$(APP)" --levels "$(LEVELS)" --repeats $(REPEATS)
+bootstrap-tests: ## Build app + UI tests once (build-for-testing, for sharding)
+	cd app && xcodegen generate && xcodebuild build-for-testing \
+	  -project SimDensity.xcodeproj -scheme SimDensity \
+	  -destination 'generic/platform=iOS Simulator' \
+	  -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+
+sweep: ## Run the density sweep (override LEVELS / REPEATS / PROFILE)
+	./harness/sweep.sh --app "$(APP)" --levels "$(LEVELS)" --repeats $(REPEATS) --profile "$(or $(PROFILE),IDLE)"
+
+shard: ## Shard the UI-test suite across N sims; measures the speedup curve
+	./harness/shard.sh --levels "$(or $(SHARDS),1 2 4)"
+
+dashboard: ## Build the HTML dashboard from the latest results
+	@latest=$$(ls -td results/*/ 2>/dev/null | grep -v shard | head -1); \
+	  shard=$$(ls -t results/*shard*/speedup.csv 2>/dev/null | head -1); \
+	  test -n "$$latest" && (cd harness && python3 dashboard.py "../$$latest" $${shard:+--shard "../$$shard"}) \
+	  || echo "no results yet — run 'make sweep'"
 
 analyze: ## Summarize the latest results + write report.md next to the CSV
-	@latest=$$(ls -td results/*/ 2>/dev/null | head -1); \
+	@latest=$$(ls -td results/*/ 2>/dev/null | grep -v shard | head -1); \
 	  test -n "$$latest" && python3 harness/analyze.py "$$latest/results.csv" --report "$$latest/report.md" || echo "no results yet — run 'make sweep'"
 
 clean: ## Remove build output and results

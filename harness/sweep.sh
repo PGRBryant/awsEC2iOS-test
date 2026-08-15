@@ -25,6 +25,8 @@ KEEP_GOING=1                  # keep sweeping to higher N after a level fails
 SHOT_MIN_BYTES=8000           # a screenshot smaller than this ~= nothing rendered
 DRY_RUN=0                     # 1 = use harness/mock/simctl (no Mac needed)
 MOCK_SIMCTL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mock/simctl"
+PROFILE="IDLE"                # app load profile: IDLE | ANIMATE | SCROLL
+SAMPLE_INTERVAL=2             # seconds between timeline samples (0 = off)
 
 usage() {
   cat <<EOF
@@ -39,6 +41,8 @@ Usage: sweep.sh --app <path-to-.app> [options]
   --boot-timeout S     Per-sim boot deadline, seconds         (default: $BOOT_TIMEOUT)
   --launch-timeout S   Per-sim launch/render deadline         (default: $LAUNCH_TIMEOUT)
   --out DIR            Results directory                      (default: results/<timestamp>)
+  --profile P          App load profile: IDLE | ANIMATE | SCROLL   (default: IDLE)
+  --sample-interval S  Seconds between timeline.csv samples; 0=off (default: $SAMPLE_INTERVAL)
   --stop-on-fail       Stop the sweep at the first level that isn't 100% clean
   --dry-run            Use the mock simctl (harness/mock/simctl); runs on any OS.
                        --app becomes optional. Fault-injection via MOCK_* env vars.
@@ -55,6 +59,8 @@ while [ $# -gt 0 ]; do
     --boot-timeout)   BOOT_TIMEOUT="$2"; shift 2;;
     --launch-timeout) LAUNCH_TIMEOUT="$2"; shift 2;;
     --out)            OUT_DIR="$2"; shift 2;;
+    --profile)        PROFILE="$2"; shift 2;;
+    --sample-interval) SAMPLE_INTERVAL="$2"; shift 2;;
     --stop-on-fail)   KEEP_GOING=0; shift;;
     --dry-run)        DRY_RUN=1; shift;;
     -h|--help)        usage; exit 0;;
@@ -89,6 +95,17 @@ simctl() {
 
 # byte size of a file, macOS (stat -f) or GNU (stat -c)
 filesize() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || echo 0; }
+
+# ops/sec the app reported inside a sim's sandbox (INFER profile), else 0
+sim_infer_rate() {
+  local dir; dir="$(simctl get_app_container "$1" "$BUNDLE_ID" data 2>/dev/null)"
+  [ -n "$dir" ] && [ -f "$dir/Documents/metrics.json" ] || { echo 0; return; }
+  python3 -c '
+import json,sys
+try: print(json.load(open(sys.argv[1])).get("ops_per_sec", 0))
+except Exception: print(0)
+' "$dir/Documents/metrics.json"
+}
 
 # Newest iPhone SUPPORTED BY the chosen runtime. Pairing matters: an
 # unsupported device+runtime pair creates fine but never boots (found the hard
@@ -207,11 +224,35 @@ TS="$(date +%Y%m%d-%H%M%S)"
 [ -n "$OUT_DIR" ] || OUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/results/$TS"
 mkdir -p "$OUT_DIR/screens"
 CSV="$OUT_DIR/results.csv"
-echo "level,repeat,device,runtime,boots_ok,installs_ok,launches_ok,renders_ok,boot_wall_ms,mem_used_mb,mem_total_mb,load1,proc_count,swap_used_mb,failure_mode" > "$CSV"
-c_info "writing results to $CSV"
+echo "level,repeat,device,runtime,profile,boots_ok,installs_ok,launches_ok,renders_ok,boot_wall_ms,mem_used_mb,mem_total_mb,load1,proc_count,swap_used_mb,infer_ops,failure_mode" > "$CSV"
+c_info "writing results to $CSV (profile=$PROFILE)"
+
+# the app reads SD_PROFILE from its environment; simctl forwards SIMCTL_CHILD_* vars
+export SIMCTL_CHILD_SD_PROFILE="$PROFILE"
+
+# ---- timeline sampler: background loop writing per-interval host samples ----
+TIMELINE="$OUT_DIR/timeline.csv"
+echo "ts_ms,level,repeat,mem_used_mb,mem_total_mb,load1,proc_count,swap_used_mb,booted" > "$TIMELINE"
+SAMPLER_PID=""
+booted_count() { simctl list devices booted 2>/dev/null | grep -c Booted || true; }
+start_sampler() { # $1=level $2=repeat
+  [ "$SAMPLE_INTERVAL" -gt 0 ] || return 0
+  (
+    while :; do
+      printf '%s,%s,%s,%s,%s\n' "$(now_ms)" "$1" "$2" "$(sample_metrics)" "$(booted_count)" >> "$TIMELINE"
+      sleep "$SAMPLE_INTERVAL"
+    done
+  ) &
+  SAMPLER_PID=$!
+}
+stop_sampler() {
+  [ -n "$SAMPLER_PID" ] && kill "$SAMPLER_PID" 2>/dev/null && wait "$SAMPLER_PID" 2>/dev/null
+  SAMPLER_PID=""
+}
 
 CREATED=()  # udids created this run (for cleanup on exit)
 cleanup() {
+  stop_sampler
   c_warn "cleaning up ${#CREATED[@]} simulators..."
   for u in "${CREATED[@]:-}"; do
     [ -n "$u" ] || continue
@@ -286,16 +327,26 @@ run_trial() {
   [ "$boots_ok" -eq "$n" ] || : # failure already set above
   if [ -z "$failure" ] && [ "$renders_ok" -lt "$n" ]; then failure="partial_render"; fi
 
+  # edge-AI throughput: let the inference loops settle, then sum per-sim rates
+  local infer_ops=0
+  if [ "$PROFILE" = "INFER" ] && [ "$renders_ok" -gt 0 ]; then
+    sleep 10
+    infer_ops="$(
+      for u in "${udids[@]}"; do is_booted "$u" && sim_infer_rate "$u"; done |
+      python3 -c 'import sys; print(round(sum(float(l) for l in sys.stdin if l.strip()), 2))'
+    )"
+  fi
+
   local metrics; metrics="$(sample_metrics)"
-  record_row "$n" "$rep" "$boots_ok" "$installs_ok" "$launches_ok" "$renders_ok" "$boot_wall" "$failure" "$metrics"
+  record_row "$n" "$rep" "$boots_ok" "$installs_ok" "$launches_ok" "$renders_ok" "$boot_wall" "$failure" "$metrics" "$infer_ops"
   teardown "${udids[@]}"
 }
 
 record_row() {
-  # level repeat boots installs launches renders boot_wall failure [metrics]
+  # level repeat boots installs launches renders boot_wall failure [metrics] [infer_ops]
   local metrics="${9:-0,0,0,0,0}"
-  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-    "$1" "$2" "$DEVICE" "$RUNTIME" "$3" "$4" "$5" "$6" "$7" "$metrics" "${8:-}" >> "$CSV"
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "$1" "$2" "$DEVICE" "$RUNTIME" "$PROFILE" "$3" "$4" "$5" "$6" "$7" "$metrics" "${10:-0}" "${8:-}" >> "$CSV"
 }
 
 teardown() {
@@ -321,11 +372,13 @@ for n in $LEVELS; do
   level_clean=1
   for rep in $(seq 1 "$REPEATS"); do
     c_info "level N=$n  trial $rep/$REPEATS"
+    start_sampler "$n" "$rep"
     run_trial "$n" "$rep"
+    stop_sampler
     # was the last row clean? (renders_ok == n and no failure mode)
     last="$(tail -1 "$CSV")"
-    renders="$(echo "$last" | cut -d, -f8)"
-    fmode="$(echo "$last" | cut -d, -f15)"
+    renders="$(echo "$last" | cut -d, -f9)"
+    fmode="$(echo "$last" | cut -d, -f17)"
     if [ "$renders" != "$n" ] || [ -n "$fmode" ]; then
       level_clean=0
       c_warn "N=$n trial $rep degraded (renders=$renders/$n, mode='${fmode:-none}')"

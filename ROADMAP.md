@@ -38,6 +38,24 @@ Legend: ✅ done · 🔄 in flight · ⬜ not started
   up to **~135 sims (M4 Pro/48 GB)** — RAM-bound only; CPU or the ~2,500
   process/user wall may bind first, which is exactly what Phase 5 measures
 
+## Phase 2.5 — Developer realism (free hardware)
+
+What a phone team actually buys cloud sims for is faster PR feedback — these
+make the demo mirror that use case, still without AWS spend:
+
+- ✅ Load profiles (`IDLE`/`ANIMATE`/`SCROLL`): density measured under
+  app-like work, selectable via `--profile`
+- ✅ Sharded test suite (12 UI tests) + `harness/shard.sh`: suite wall-time
+  vs shard count — the speedup curve (mock-verified ~1.98×/2, ~3.87×/4)
+- ✅ Per-second resource timeline (`timeline.csv`) sampled during sweeps
+- ✅ HTML dashboard (`harness/dashboard.py`): self-contained, light+dark,
+  CVD-validated palette; CI uploads it as an artifact
+- ✅ Edge-AI profile (`INFER`): real on-device neural inference via Vision
+  OCR (models ship with the OS — zero bundled assets); per-sim rates
+  collected via `simctl get_app_container`; dashboard charts aggregate
+  inferences/sec vs N
+- 🔄 Real-Mac validation (hosted CI, PR #3)
+
 ## Phase 3 — AWS provisioning (the 24h clock)
 
 - ✅ `aws/provision.sh` / `aws/teardown.sh` / runbook (SSM-resolved AMI,

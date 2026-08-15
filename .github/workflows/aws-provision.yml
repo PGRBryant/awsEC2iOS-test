@@ -1,0 +1,102 @@
+# Provision / tear down the EC2 Mac Dedicated Host from CI — no stored AWS
+# secrets. Auth is GitHub OIDC → the SimDensityGithubOIDC role (aws/README.md
+# step 0.5); the role ARN lives in the AWS_ROLE_ARN repository *variable*.
+#
+# Manual dispatch ONLY: allocating a Mac host starts a 24-HOUR minimum bill.
+# Host/instance ids persist on the aws-state branch so teardown works from a
+# fresh runner.
+name: AWS Mac host
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to do'
+        type: choice
+        required: true
+        options: [status, provision, teardown]
+      instance_type:
+        description: 'Mac instance type (provision only)'
+        default: 'mac2-m2.metal'
+      key_name:
+        description: 'EC2 key pair name (provision only)'
+        default: 'simdensity'
+      ssh_cidr:
+        description: 'CIDR allowed to SSH, e.g. 203.0.113.7/32 (provision only)'
+        default: ''
+
+permissions:
+  id-token: write   # mint the OIDC token
+  contents: write   # read/update the aws-state branch
+
+concurrency:
+  group: aws-mac-host   # never two provisioning runs at once
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Who am I
+        run: aws sts get-caller-identity
+
+      - name: Restore host state (if any)
+        run: |
+          if git fetch origin aws-state 2>/dev/null; then
+            git show origin/aws-state:.state > aws/.state 2>/dev/null || true
+          fi
+          test -f aws/.state && cat aws/.state || echo "(no saved state)"
+
+      - name: Status
+        if: inputs.action == 'status'
+        run: |
+          aws ec2 describe-hosts \
+            --filter Name=tag:project,Values=simdensity \
+            --query 'Hosts[].{id:HostId,state:State,type:HostProperties.InstanceType,az:AvailabilityZone}' \
+            --output table
+          aws ec2 describe-instances \
+            --filters Name=tag:project,Values=simdensity Name=instance-state-name,Values=pending,running,stopping,stopped \
+            --query 'Reservations[].Instances[].{id:InstanceId,state:State.Name,ip:PublicIpAddress}' \
+            --output table
+
+      - name: Provision (starts the 24h billing clock)
+        if: inputs.action == 'provision'
+        env:
+          KEY_NAME: ${{ inputs.key_name }}
+          INSTANCE_TYPE: ${{ inputs.instance_type }}
+          SSH_CIDR: ${{ inputs.ssh_cidr }}
+          REGION: us-east-1
+        run: |
+          test -n "$SSH_CIDR" || { echo "ssh_cidr is required for provision (the runner's own IP is useless to you)"; exit 1; }
+          ./aws/provision.sh --type "$INSTANCE_TYPE"
+
+      - name: Teardown
+        if: inputs.action == 'teardown'
+        run: |
+          test -f aws/.state || { echo "no saved state — nothing to tear down (check status)"; exit 1; }
+          ./aws/teardown.sh
+
+      - name: Save host state
+        if: always() && inputs.action != 'status'
+        run: |
+          d=$(mktemp -d) && cd "$d"
+          git init -q -b aws-state
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          if [ -f "$GITHUB_WORKSPACE/aws/.state" ]; then
+            cp "$GITHUB_WORKSPACE/aws/.state" .state
+          else
+            echo "released $(date -u +%FT%TZ)" > RELEASED.txt
+          fi
+          git add -A
+          git commit -qm "host state after ${{ inputs.action }} (run ${GITHUB_RUN_NUMBER})"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" aws-state

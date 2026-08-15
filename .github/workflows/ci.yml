@@ -12,6 +12,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# superseded runs race the new one for macOS runner cores and everything
+# times out — cancel them instead
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dryrun-linux:
     runs-on: ubuntu-latest
@@ -40,14 +46,32 @@ jobs:
             --boot-timeout 6 --launch-timeout 4 --out results/blank
           grep -Eq 'no_render|partial_render' results/blank/results.csv
 
+      - name: Shard orchestration + speedup math (mock xcodebuild)
+        run: |
+          rm -rf /tmp/simdensity-mock
+          MOCK_BOOT_SECS=1 MOCK_SECS_PER_TEST=0.3 ./harness/shard.sh --dry-run \
+            --levels "1 2 4" --boot-timeout 15 --out results/shard
+          # 4 shards must be at least 2x faster than 1 shard on mock timing
+          python3 -c "import csv; r={int(x['shards']):int(x['wall_ms']) for x in csv.DictReader(open('results/shard/speedup.csv'))}; assert r[1]/r[4]>=2, f'speedup too low: {r}'"
+
+      - name: Dashboard generates from dry-run data
+        run: |
+          cd harness && python3 dashboard.py ../results/clean --shard ../results/shard/speedup.csv \
+            --out ../results/clean/dashboard.html
+          test -s ../results/clean/dashboard.html
+
       - name: Analyzer + report run on dry-run data
         run: |
           python3 harness/analyze.py results/clean/results.csv --report results/clean/report.md
           test -s results/clean/report.md
 
-  smoke-macos:
+  sweep-macos:
     runs-on: macos-15
-    timeout-minutes: 45
+    # INFER inference loops make later boots slow — that IS the load data.
+    # Shard runs in its own parallel job so neither starves the other.
+    timeout-minutes: 90
+    permissions:
+      contents: write   # publish results to the ci-results branch
     steps:
       - uses: actions/checkout@v4
 
@@ -60,19 +84,23 @@ jobs:
       - name: Bootstrap (real xcodebuild)
         run: ./scripts/bootstrap.sh
 
-      - name: Mini sweep (real simctl, N = 1 2 3)
+      - name: Mini sweep (real simctl, N = 1 2, INFER profile)
         run: |
-          # generous boot deadline: first boot of a runtime on a cold runner is slow
+          # CI validates the pipeline; deep N-curves are the EC2 box's job.
+          # N=1,2 fits every runner speed inside the timeout (N=3 didn't: run 12).
           ./harness/sweep.sh \
             --app app/build/Build/Products/Debug-iphonesimulator/SimDensity.app \
-            --levels "1 2 3" --repeats 1 --boot-timeout 420 --out results/smoke
+            --levels "1 2" --repeats 1 --boot-timeout 420 \
+            --profile INFER --sample-interval 2 --out results/smoke
 
-      - name: Analyze + report
+      - name: Analyze + report + dashboard
         if: always()
         run: |
           test -f results/smoke/results.csv || { echo "no results produced"; exit 1; }
           python3 harness/analyze.py results/smoke/results.csv --report results/smoke/report.md \
             | tee results/smoke/summary.txt
+          cd harness && python3 dashboard.py ../results/smoke
+          cd ..
           # smoke must be fully clean at these tiny levels
           ! grep -E ',(boot_timeout|no_render|partial_render|create|install|launch)$' results/smoke/results.csv
 
@@ -80,5 +108,71 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-macos-results
+          name: sweep-results
           path: results/
+
+      # Actions artifact downloads redirect to blob storage some networks can't
+      # reach; a plain git branch is fetchable anywhere github.com is.
+      - name: Publish results to ci-results branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          d=$(mktemp -d)
+          rsync -a --exclude 'screens' results/ "$d/results/" 2>/dev/null || cp -R results "$d/results"
+          cd "$d"
+          git init -q -b ci-results
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "run ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA} · $(date -u +%FT%TZ)" > RUN.txt
+          git add -A
+          git commit -qm "CI sweep results: run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-results
+
+  shard-macos:
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: write   # publish results to the ci-results-shard branch
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate project + build-for-testing
+        run: |
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+          cd app && xcodegen generate
+          xcodebuild build-for-testing \
+            -project SimDensity.xcodeproj -scheme SimDensity \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO 2>&1 | tail -5
+
+      - name: Real shard run (1 vs 2 shards, 12 UI tests)
+        run: |
+          ./harness/shard.sh --levels "1 2" --boot-timeout 420 --out results/shard
+          # a red suite must not hide inside a green job (run 8 lesson)
+          python3 -c "import csv; rows=list(csv.DictReader(open('results/shard/speedup.csv'))); assert rows and all(int(r['failed_shards'])==0 and int(r['passed_shards'])>0 for r in rows), f'shard failures: {rows}'"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-results
+          path: results/
+
+      - name: Publish results to ci-results-shard branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          d=$(mktemp -d)
+          cp -R results "$d/results"
+          cd "$d"
+          git init -q -b ci-results-shard
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "run ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA} · $(date -u +%FT%TZ)" > RUN.txt
+          git add -A
+          git commit -qm "CI shard results: run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-results-shard
