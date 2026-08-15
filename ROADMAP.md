@@ -88,6 +88,22 @@ make the demo mirror that use case, still without AWS spend:
 
 - ✅ Report generator (`analyze.py --report`)
 - ⬜ Final `report.md` committed: the number, the knee, what broke first
+- 🔄 White paper (`docs/PAPER.md`) — skeleton drafted; sections 6–7 await
+  EC2 data
+- 🔄 Six-page exec/eng brief (`docs/BRIEF.md`) — skeleton drafted; incl.
+  competitive analysis ("the GCP-shaped hole")
+- ⬜ Dashboard snapshots per ladder, versioned in `docs/snapshots/`
+
+## Phase 6.5 — Publication polish (repo is referenced by the docs)
+
+- ⬜ README rewritten as the repo's front door: the question, headline
+  numbers, links to BRIEF/PAPER/dashboard, quickstart per tier
+- ⬜ Branch merged to main via PR; stale branches pruned; results branches
+  (`ec2-results`, `ci-results*`, `aws-state`) documented in README
+- ⬜ Docs pass: RUNDAY updated with today's real lessons (no Xcode on AMI,
+  pending-host wait, SSM recovery path); aws/README troubleshooting current
+- ⬜ Sanity sweep: no credentials/IPs/account-ids in tracked files; LICENSE
+  present; mocks and harness runnable by a stranger (`make dryrun`)
 
 ## Phase 7 — Optional extras
 
