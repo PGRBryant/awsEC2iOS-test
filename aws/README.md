@@ -16,9 +16,16 @@ at ~24h. Terminating the *instance* stops instance charges immediately, but the
 
 ## Step 0 — grant the harness AWS access (one-time, console)
 
-The scripts here need an identity that's allowed to spin up EC2 Mac hardware.
-Create a dedicated IAM user with a least-privilege policy — **not** your root
-account, and no broader than the actions the scripts actually call.
+The scripts need an identity allowed to spin up EC2 Mac hardware. Two options
+share the same least-privilege policy (0.1 below):
+
+- **Option A — IAM user + access key** (0.2–0.3): simplest; for running
+  `provision.sh` from your own machine.
+- **Option B — OIDC role for GitHub Actions** (0.5): **no stored secrets at
+  all** — workflows assume a role scoped to this repo and receive credentials
+  that expire in minutes. Preferred once you want CI to drive provisioning
+  (`.github/workflows/aws-provision.yml`). If you set this up, deactivate and
+  delete any Option-A access key afterwards.
 
 ### 0.1 Create the policy
 
@@ -112,6 +119,44 @@ IAM → the user → Security credentials → **Deactivate** the key immediately
 **Console → EC2 → Key pairs → Create key pair** — name it (e.g.
 `simdensity`), type ED25519, download the `.pem`, `chmod 400` it. Pass the
 name to `provision.sh` via `KEY_NAME=simdensity`.
+
+### 0.5 Option B — OIDC role for GitHub Actions (no stored secrets)
+
+1. **Add GitHub as an identity provider** — Console → IAM → Identity
+   providers → **Add provider** → *OpenID Connect*:
+   - Provider URL: `https://token.actions.githubusercontent.com`
+   - Audience: `sts.amazonaws.com`
+2. **Create the role** — IAM → Roles → **Create role** → *Web identity* →
+   pick the provider above, audience `sts.amazonaws.com`, GitHub organization
+   `PGRBryant`, repository `awsEC2iOS-test` (the wizard writes the trust
+   policy). Name it `SimDensityGithubOIDC` and attach the
+   `SimDensityProvisioning` policy from 0.1. The resulting trust policy
+   should look like:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com" },
+       "Action": "sts:AssumeRoleWithWebIdentity",
+       "Condition": {
+         "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+         "StringLike":   { "token.actions.githubusercontent.com:sub": "repo:PGRBryant/awsEC2iOS-test:*" }
+       }
+     }]
+   }
+   ```
+
+   Tighten `:sub` to `repo:PGRBryant/awsEC2iOS-test:ref:refs/heads/main` if
+   you only ever want main-branch workflows to hold hardware power.
+3. **Tell the workflow the role ARN** — repo → Settings → Secrets and
+   variables → Actions → **Variables** → new repository variable
+   `AWS_ROLE_ARN` = the role's ARN (it's an identifier, not a secret, so a
+   variable is fine).
+4. Done — `.github/workflows/aws-provision.yml` (manual dispatch only)
+   assumes the role via `aws-actions/configure-aws-credentials`. No key
+   material exists anywhere; revoking access = deleting the role.
 
 ## Step 1 — quota (do this days ahead; it's the only real lead-time item)
 

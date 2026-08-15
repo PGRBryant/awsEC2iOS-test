@@ -92,9 +92,15 @@ fi
 log "subnet: $SUBNET_ID"
 
 # --- SSH security group scoped to your current public IP, if not supplied ---
+# SSH_CIDR overrides the autodetected IP (needed when this runs in CI: the
+# runner's IP is not where you'll SSH from).
 if [ -z "$SG_ID" ]; then
-  MYIP="$(curl -fsS https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')"
-  [ -n "$MYIP" ] || die "could not determine your public IP — pass --sg <id>"
+  if [ -n "${SSH_CIDR:-}" ]; then
+    MYIP="${SSH_CIDR%/*}"
+  else
+    MYIP="$(curl -fsS https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')"
+  fi
+  [ -n "$MYIP" ] || die "could not determine your public IP — pass --sg <id> or set SSH_CIDR"
   VPC_ID="$(aws_ ec2 describe-subnets --subnet-ids "$SUBNET_ID" \
             --query 'Subnets[0].VpcId' --output text)"
   SG_ID="$(aws_ ec2 describe-security-groups \
