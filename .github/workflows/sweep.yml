@@ -1,26 +1,45 @@
-# Runs the simulator-density sweep on a self-hosted macOS runner (the EC2 Mac).
-# Register the runner first — see aws/README.md "Optional — real CI/CD".
+# Runs the simulator-density sweep (or the shard-speedup run) on a
+# self-hosted macOS runner (the EC2 Mac). Register the runner first — see
+# aws/README.md "Optional — real CI/CD".
+#
+# Designed to be driven entirely by dispatch, so run day needs no SSH once
+# the runner is up: each run publishes results to the ec2-results branch
+# (append-only, one directory per run) where they can be pulled and analyzed.
 name: Simulator density sweep
 
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'What to run'
+        type: choice
+        required: true
+        options: [sweep, shard]
       levels:
-        description: 'N values to sweep (space-separated)'
+        description: 'N values (space-separated): sim count for sweep, shard count for shard'
         default: '1 2 4 8 16'
       repeats:
-        description: 'Trials per level'
-        default: '3'
+        description: 'Trials per level (sweep only)'
+        default: '2'
+      profile:
+        description: 'Load profile (sweep only)'
+        type: choice
+        options: [IDLE, ANIMATE, SCROLL, INFER]
       device:
         description: 'Simulator device type (auto = newest iPhone)'
         default: 'auto'
+      boot_timeout:
+        description: 'Per-sim boot timeout, seconds (high N boots slowly)'
+        default: '600'
 
 jobs:
-  sweep:
+  run:
     # 'self-hosted' + 'macOS' labels target the EC2 Mac runner, not GitHub's
     # hosted macs (which can't nest the virtualization this experiment needs).
     runs-on: [self-hosted, macOS]
-    timeout-minutes: 240
+    timeout-minutes: 300
+    permissions:
+      contents: write   # publish results to the ec2-results branch
     steps:
       - uses: actions/checkout@v4
 
@@ -29,27 +48,72 @@ jobs:
           sw_vers
           xcodebuild -version
           xcrun simctl list runtimes available
+          sysctl -n hw.ncpu hw.memsize
 
       - name: Build the app once
         run: ./scripts/bootstrap.sh
 
-      - name: Run the sweep
+      - name: Density sweep
+        if: inputs.mode == 'sweep'
         run: |
+          out="results/$(echo "${{ inputs.profile }}" | tr '[:upper:]' '[:lower:]')"
           ./harness/sweep.sh \
             --app app/build/Build/Products/Debug-iphonesimulator/SimDensity.app \
-            --levels "${{ github.event.inputs.levels }}" \
-            --repeats "${{ github.event.inputs.repeats }}" \
-            --device "${{ github.event.inputs.device }}"
+            --levels "${{ inputs.levels }}" \
+            --repeats "${{ inputs.repeats }}" \
+            --device "${{ inputs.device }}" \
+            --profile "${{ inputs.profile }}" \
+            --sample-interval 5 \
+            --boot-timeout "${{ inputs.boot_timeout }}" \
+            --out "$out"
+
+      - name: Shard speedup
+        if: inputs.mode == 'shard'
+        run: |
+          make bootstrap-tests
+          ./harness/shard.sh --levels "${{ inputs.levels }}" \
+            --boot-timeout "${{ inputs.boot_timeout }}" --out results/shard
+          # a red suite must not hide inside a green job (run 8 lesson)
+          python3 -c "import csv; rows=list(csv.DictReader(open('results/shard/speedup.csv'))); assert rows and all(int(r['failed_shards'])==0 and int(r['passed_shards'])>0 for r in rows), f'shard failures: {rows}'"
 
       - name: Analyze
         if: always()
         run: |
           latest=$(ls -td results/*/ | head -1)
-          python3 harness/analyze.py "$latest/results.csv" | tee "$latest/summary.txt"
+          if [ -f "$latest/results.csv" ]; then
+            python3 harness/analyze.py "$latest/results.csv" | tee "$latest/summary.txt"
+          fi
 
-      - name: Upload results
+      # Artifact downloads aren't reachable from everywhere; the git branch is.
+      # Append-only: each run lands in its own directory, nothing overwritten.
+      - name: Publish results to ec2-results branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          test -d results || { echo "no results directory — nothing to publish"; exit 0; }
+          d=$(mktemp -d) && cd "$d"
+          git init -q -b ec2-results
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q "$url" ec2-results 2>/dev/null; then
+            git checkout -q FETCH_HEAD
+            git checkout -q -b keep && git branch -q -M ec2-results
+          fi
+          dest="runs/run${GITHUB_RUN_NUMBER}-${{ inputs.mode }}-$(echo "${{ inputs.profile }}" | tr '[:upper:]' '[:lower:]')"
+          mkdir -p "$dest"
+          rsync -a --exclude 'screens' "$GITHUB_WORKSPACE/results/" "$dest/" 2>/dev/null \
+            || cp -R "$GITHUB_WORKSPACE/results/." "$dest/"
+          echo "run ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA} · $(date -u +%FT%TZ)" > "$dest/RUN.txt"
+          git add -A
+          git commit -qm "EC2 ${{ inputs.mode }} results: run ${GITHUB_RUN_NUMBER} (${{ inputs.profile }})"
+          git push -q "$url" ec2-results
+
+      - name: Upload results artifact (backup)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sweep-results
+          name: sweep-results-${{ github.run_number }}
           path: results/
