@@ -11,7 +11,7 @@ on:
         description: 'What to do'
         type: choice
         required: true
-        options: [report, clean]
+        options: [report, clean, resize-disk]
 
 jobs:
   maintain:
@@ -63,6 +63,19 @@ jobs:
           # GBs once but rebuilding them makes every subsequent boot crawl
           brew cleanup -s 2>/dev/null || true
           rm -rf "$HOME/Library/Caches/Homebrew"/* 2>/dev/null || true
+
+      # After the EBS volume is grown in the console (EC2 → Volumes → Modify),
+      # the APFS container must be told the disk got bigger. This is the
+      # AWS-documented procedure for EC2 Mac. Safe to re-run; no reboot needed.
+      - name: Resize APFS to fill the (grown) EBS volume
+        if: inputs.action == 'resize-disk'
+        run: |
+          set -x
+          PDISK=$(diskutil list physical external | head -n1 | cut -d' ' -f1)
+          APFSCONT=$(diskutil list physical external | grep Apple_APFS | tr -s ' ' | cut -d' ' -f8)
+          yes | sudo diskutil repairDisk "$PDISK"
+          sudo diskutil apfs resizeContainer "$APFSCONT" 0
+          df -h /
 
       - name: Publish rescued results to ec2-results branch
         if: always()
