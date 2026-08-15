@@ -126,12 +126,18 @@ name to `provision.sh` via `KEY_NAME=simdensity`.
    providers → **Add provider** → *OpenID Connect*:
    - Provider URL: `https://token.actions.githubusercontent.com`
    - Audience: `sts.amazonaws.com`
-2. **Create the role** — IAM → Roles → **Create role** → *Web identity* →
-   pick the provider above, audience `sts.amazonaws.com`, GitHub organization
-   `PGRBryant`, repository `awsEC2iOS-test` (the wizard writes the trust
-   policy). Name it `SimDensityGithubOIDC` and attach the
-   `SimDensityProvisioning` policy from 0.1. The resulting trust policy
-   should look like:
+2. **Create the role** — IAM → Roles → **Create role**. The wizard has three
+   screens:
+   1. *Select trusted entity*: choose **Web identity**, pick the provider from
+      step 1, audience `sts.amazonaws.com`, GitHub organization `PGRBryant`,
+      repository `awsEC2iOS-test`. (This screen writes the trust policy.)
+   2. *Add permissions*: **do not create an inline policy** — search the
+      existing-policies list for `SimDensityProvisioning` (from 0.1; filter
+      "Customer managed" if needed), tick it, Next. If it's missing, create it
+      via 0.1 in another tab first.
+   3. *Name, review, create*: name it `SimDensityGithubOIDC` → **Create role**.
+
+   The resulting trust policy should look like:
 
    ```json
    {
