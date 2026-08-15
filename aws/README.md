@@ -164,6 +164,34 @@ name to `provision.sh` via `KEY_NAME=simdensity`.
    assumes the role via `aws-actions/configure-aws-credentials`. No key
    material exists anywhere; revoking access = deleting the role.
 
+**Troubleshooting `Not authorized to perform sts:AssumeRoleWithWebIdentity`:**
+the token was minted fine but the trust policy's conditions didn't match its
+claims. Diagnosed here the hard way — the decisive tool is the workflow's
+"Decode OIDC token claims" step, which prints the real `sub` to compare
+character-for-character.
+
+What we actually found: GitHub now stamps **immutable numeric IDs** into the
+sub claim —
+
+```
+repo:PGRBryant@9953275/awsEC2iOS-test@1331487463:ref:refs/heads/main
+```
+
+— so the textbook pattern `repo:ORG/REPO:*` never matches. Use ID-tolerant
+`StringLike` patterns (and remember IAM string matching is case-sensitive,
+and `*` wildcards only work under `StringLike`, never `StringEquals`):
+
+```json
+"StringLike": { "token.actions.githubusercontent.com:sub": [
+  "repo:PGRBryant@*/awsEC2iOS-test@*:*",
+  "repo:PGRBryant/awsEC2iOS-test:*"
+] }
+```
+
+Also verify the identity provider is exactly
+`token.actions.githubusercontent.com` with audience `sts.amazonaws.com`.
+Retest free with the workflow's `status` action.
+
 ## Step 1 — quota (do this days ahead; it's the only real lead-time item)
 
 New accounts almost always have a **quota of 0** for Mac Dedicated Hosts, and the
