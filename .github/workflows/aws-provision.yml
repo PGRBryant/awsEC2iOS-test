@@ -68,10 +68,20 @@ jobs:
       - name: Status
         if: inputs.action == 'status'
         run: |
+          echo "== Key pairs in us-east-1 (use the exact name for provision) =="
+          aws ec2 describe-key-pairs \
+            --query 'KeyPairs[].{name:KeyName,type:KeyType,created:CreateTime}' \
+            --output table
+          echo "== Mac Dedicated Host quotas =="
+          aws service-quotas list-service-quotas --service-code ec2 \
+            --query "Quotas[?contains(QuotaName, 'Dedicated mac')] | [?Value > \`0\`].[QuotaName,Value]" \
+            --output table
+          echo "== simdensity hosts =="
           aws ec2 describe-hosts \
             --filter Name=tag:project,Values=simdensity \
             --query 'Hosts[].{id:HostId,state:State,type:HostProperties.InstanceType,az:AvailabilityZone}' \
             --output table
+          echo "== simdensity instances =="
           aws ec2 describe-instances \
             --filters Name=tag:project,Values=simdensity Name=instance-state-name,Values=pending,running,stopping,stopped \
             --query 'Reservations[].Instances[].{id:InstanceId,state:State.Name,ip:PublicIpAddress}' \
