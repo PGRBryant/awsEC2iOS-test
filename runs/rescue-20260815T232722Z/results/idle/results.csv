@@ -1,0 +1,8 @@
+level,repeat,device,runtime,profile,boots_ok,installs_ok,launches_ok,renders_ok,boot_wall_ms,mem_used_mb,mem_total_mb,load1,proc_count,swap_used_mb,infer_ops,failure_mode
+1,1,com.apple.CoreSimulator.SimDeviceType.iPhone-17e,com.apple.CoreSimulator.SimRuntime.iOS-26-5,IDLE,1,1,1,1,1092,13549,32768,22.40,460,166.12,0,
+1,2,com.apple.CoreSimulator.SimDeviceType.iPhone-17e,com.apple.CoreSimulator.SimRuntime.iOS-26-5,IDLE,1,1,1,1,1559,13565,32768,41.70,451,166.06,0,
+2,1,com.apple.CoreSimulator.SimDeviceType.iPhone-17e,com.apple.CoreSimulator.SimRuntime.iOS-26-5,IDLE,2,2,2,2,10664,17909,32768,288.53,730,166.06,0,
+2,2,com.apple.CoreSimulator.SimDeviceType.iPhone-17e,com.apple.CoreSimulator.SimRuntime.iOS-26-5,IDLE,2,2,2,2,10544,17511,32768,374.96,733,166.06,0,
+4,1,com.apple.CoreSimulator.SimDeviceType.iPhone-17e,com.apple.CoreSimulator.SimRuntime.iOS-26-5,IDLE,4,4,4,4,25171,18787,32768,620.11,1209,165.94,0,
+4,2,com.apple.CoreSimulator.SimDeviceType.iPhone-17e,com.apple.CoreSimulator.SimRuntime.iOS-26-5,IDLE,4,4,4,4,25711,19153,32768,813.39,1216,165.94,0,
+8,1,com.apple.CoreSimulator.SimDeviceType.iPhone-17e,com.apple.CoreSimulator.SimRuntime.iOS-26-5,IDLE,8,8,8,8,94348,24888,32768,969.08,2346,1892.31,0,
