@@ -54,13 +54,19 @@ make the demo mirror that use case, still without AWS spend:
   OCR (models ship with the OS — zero bundled assets); per-sim rates
   collected via `simctl get_app_container`; dashboard charts aggregate
   inferences/sec vs N
-- 🔄 Real-Mac validation (hosted CI, PR #3)
+- ✅ Real-Mac validation complete (PR #3 merged): profiles measured at
+  ~267/~356/~1080 MB/sim (idle/animate/infer); edge-AI 30→46→88 inf/s at
+  N=1–3 (near-linear on 3 cores); shard suite 12/12 green with an honest
+  0.15× speedup on 3 cores — sharding is bought with cores
+- ✅ OIDC role for GitHub Actions + manual-dispatch host workflow
+  (`aws-provision.yml`): status / provision / teardown, no stored secrets
 
 ## Phase 3 — AWS provisioning (the 24h clock)
 
 - ✅ `aws/provision.sh` / `aws/teardown.sh` / runbook (SSM-resolved AMI,
   auto AZ, SSH scoped to caller IP, 24h-aware teardown)
-- 🔄 Mac Dedicated Host quota ≥ 1 — requested, awaiting AWS
+- ✅ Mac Dedicated Host quota approved: 1× `mac2-m2pro` (12 cores / 32 GB),
+  us-east-1 — see `aws/RUNDAY.md` for the 24-hour run plan
 - ⬜ Billing budget + release-at-24h reminder
 - ⬜ Host allocated, instance up, SSH verified
 
