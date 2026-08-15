@@ -164,6 +164,24 @@ name to `provision.sh` via `KEY_NAME=simdensity`.
    assumes the role via `aws-actions/configure-aws-credentials`. No key
    material exists anywhere; revoking access = deleting the role.
 
+**Troubleshooting `Not authorized to perform sts:AssumeRoleWithWebIdentity`:**
+the token was minted fine but the trust policy's conditions didn't match its
+claims. IAM string conditions are **case-sensitive** and this repo's name is
+mixed-case, so a lowercased wizard entry silently never matches. Fix: edit the
+role's trust policy and make the `sub` condition a `StringLike` array covering
+both casings:
+
+```json
+"StringLike": { "token.actions.githubusercontent.com:sub": [
+  "repo:PGRBryant/awsEC2iOS-test:*",
+  "repo:pgrbryant/awsec2ios-test:*"
+] }
+```
+
+Also verify the identity provider is exactly
+`token.actions.githubusercontent.com` with audience `sts.amazonaws.com`.
+Retest free with the workflow's `status` action.
+
 ## Step 1 — quota (do this days ahead; it's the only real lead-time item)
 
 New accounts almost always have a **quota of 0** for Mac Dedicated Hosts, and the
