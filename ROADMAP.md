@@ -67,8 +67,12 @@ make the demo mirror that use case, still without AWS spend:
   auto AZ, SSH scoped to caller IP, 24h-aware teardown)
 - ✅ Mac Dedicated Host quota approved: 1× `mac2-m2pro` (12 cores / 32 GB),
   us-east-1 — see `aws/RUNDAY.md` for the 24-hour run plan
-- ⬜ Billing budget + release-at-24h reminder
-- ⬜ Host allocated, instance up, SSH verified
+- ✅ Release-at-24h reminders armed (T+22h ≈ 10:50Z, T+24h ≈ 12:50Z Aug 16)
+- ✅ Host allocated (h-08263dbbdfa1ed7a5, us-east-1d, ~12:50Z Aug 15 after a
+  10-attempt overnight capacity hunt), instance up (i-015e87b4be6932c2c);
+  two launch bugs found & fixed on the way: run-instances tenancy belongs
+  inside `--placement`, and a pending host must be waited to `available`
+- ⬜ SSH verified from the user's machine
 
 ## Phase 4 — CI on the paid box
 
