@@ -71,10 +71,20 @@ jobs:
         if: inputs.action == 'resize-disk'
         run: |
           set -x
+          diskutil list physical external
           PDISK=$(diskutil list physical external | head -n1 | cut -d' ' -f1)
           APFSCONT=$(diskutil list physical external | grep Apple_APFS | tr -s ' ' | cut -d' ' -f8)
-          yes | sudo diskutil repairDisk "$PDISK"
-          sudo diskutil apfs resizeContainer "$APFSCONT" 0
+          # EBS size changes can take minutes to reach the instance; poll until
+          # the kernel sees a disk larger than the APFS container (or give up)
+          for i in $(seq 1 20); do
+            yes | sudo diskutil repairDisk "$PDISK" || true
+            if sudo diskutil apfs resizeContainer "$APFSCONT" 0; then
+              break
+            fi
+            echo "container already fills the disk the kernel can see — waiting for EBS grow to propagate ($i/20)"
+            sleep 30
+          done
+          diskutil list physical external
           df -h /
 
       - name: Publish rescued results to ec2-results branch
