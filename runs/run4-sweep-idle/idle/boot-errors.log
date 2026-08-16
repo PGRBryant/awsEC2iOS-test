@@ -1,0 +1,5 @@
+An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=60):
+Unable to boot the Simulator.
+launchd failed to respond.
+Underlying error (domain=com.apple.SimLaunchHostService.RequestError, code=4):
+	Failed to start launchd_sim: could not bind to session, launchd_sim may have crashed or quit responding
