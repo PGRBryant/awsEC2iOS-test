@@ -92,19 +92,59 @@ offset); how predictions transfer across machines.
 
 ## 4. Free-tier findings (GitHub-hosted runners)
 
-*(All data in hand — write from ci-results branches / dashboard run-11.)*
+GitHub's hosted macOS runners (3 cores / 7 GB, real Apple silicon) are
+free for public repositories, which makes them a genuine measurement
+tier rather than a smoke test — with a ceiling low enough that the
+measurements mislead, as Section 6.6 shows.
 
-- RAM per simulator by profile: **~267 MB (IDLE) / ~356 (ANIMATE) /
-  ~1080 (INFER)** over a ~5.5 GB base.
-- Predicted ceilings by instance type (table from `analyze.py`
-  `EC2_TYPES`): ~31 (M1/16 GB) … ~135 (M4 Pro/48 GB) — RAM-bound only.
-- Edge-AI scaling on 3 cores: 30 → 46 → 88 aggregate inf/s at N=1,2,3 —
-  still linear when RAM ran out before CPU did.
-- Sharding on 3 cores: **0.15× "speedup"** (i.e., slower) at 2 shards —
-  sharding is bought with cores, not wished into existence. This is the
-  CI-economics teaser the EC2 box resolves.
-- Runner variance caveat: hosted-runner speed varied wildly run-to-run;
-  what that does and doesn't invalidate.
+**Density and the RAM model.** Across profiles, per-simulator memory fit
+at **~267 MB (IDLE) / ~356 (ANIMATE) / ~1,080 (INFER)** over a ~5.5 GB
+base. N = 1–3 boot, install, launch and render cleanly; the runner's
+7 GB stops the ladder there. Feeding those fits through `analyze.py`'s
+instance table produced predicted ceilings from ~31 sims (M1 / 16 GB)
+to ~135 (M4 Pro / 48 GB), RAM-bound.
+
+**Edge-AI throughput scales with cores, until it doesn't.** The INFER
+profile reached 30 → 46 → 88 aggregate inferences/sec at N = 1, 2, 3 —
+still climbing when memory, not compute, ended the ladder. On three
+cores the interesting question (where does inference throughput
+plateau?) is unanswerable; it needs a machine with cores to spare.
+
+**Sharding is bought with cores.** Splitting a 12-test UI suite across
+2 shards on a 3-core runner produced a **0.15× speedup** — that is,
+running it *sharded* took nearly seven times longer than running it
+whole. Boot and install overhead for the second simulator dwarfed the
+work saved. This single number reframes the entire CI-economics
+argument: parallelism is not free concurrency, it is a trade of fixed
+per-simulator overhead against divisible test time, and it only pays
+above a core threshold the free tier cannot reach.
+
+**Variance caveat.** Hosted-runner wall times varied by more than 2×
+between otherwise identical runs — enough that two of our CI runs timed
+out mid-sweep and one shard comparison had to be discarded. Free tiers
+are trustworthy for *correctness* signals (does it boot, does it render,
+does the suite pass) and unreliable for *timing* signals unless
+repeated. Every timing claim in this paper that matters comes from the
+dedicated box.
+
+### 4.1 Bugs found on free hardware
+
+Each of these would have consumed paid host time — several would have
+silently corrupted results instead of failing loudly:
+
+| Bug | Tier that caught it | Consequence if unseen |
+|---|---|---|
+| `pipefail` + `grep -q` misreported boot success | mocks | inflated working point |
+| Device/runtime pairing taken from the global device list (which ends at iPhone 6s Plus) | hosted CI | nothing boots on modern iOS |
+| bash 3.2 lacks `mapfile` | hosted CI | shard harness dies on macOS |
+| Container accessibility identifier collapsed children out of the AX tree | hosted CI | UI tests assert against nothing |
+| A fully red test suite reported inside a green job | hosted CI | "12/12 passing" that wasn't |
+| Concurrent CI runs starved each other's cores | hosted CI | timing data quietly meaningless |
+| Artifact blob egress blocked in our environment | hosted CI | results unreachable after the host dies |
+
+The last one changed the architecture: results are now published
+append-only to git branches per trial, which is what later made two
+crashed ladders recoverable.
 
 ### 5.3 Bugs found on free hardware
 
