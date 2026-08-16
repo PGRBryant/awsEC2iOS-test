@@ -1,0 +1,30 @@
+
+  Sweep summary  (results/infer//results.csv)
+  device=com.apple.CoreSimulator.SimDeviceType.iPhone-17e  runtime=iOS-26-5
+  --------------------------------------------------------------------------
+     N  trials   boot%  render%  boot_wall_s  peak_mem_gb   fail modes
+  --------------------------------------------------------------------------
+     1       2    100%     100%          1.8         10.3            -
+     2       2    100%     100%         10.5         16.5            -
+     4       2    100%     100%         25.3         18.3            -
+     6       2    100%     100%         50.8         23.3            -
+     8       2    100%     100%         81.8         25.4            -
+    10       2    100%     100%        117.3         26.9            -
+    12       2    100%     100%        193.9         27.2            -
+  --------------------------------------------------------------------------
+
+  Reliable working point : 12
+  Hard ceiling (boot)    : not reached in this sweep
+  legend:  (blank)=clean  ~=degraded/render  !=boot failure
+
+  RAM model: ~1520 MB per booted sim over a 11.7 GB base (85% usable RAM assumed)
+  Predicted RAM-bound ceiling by EC2 Mac instance type:
+    mac2.metal (M1)               16 GB  ->  ~1 sims
+    mac-m4.metal (M4)             24 GB  ->  ~5 sims
+    mac2-m2.metal (M2)            24 GB  ->  ~5 sims
+    mac2-m2pro.metal (M2 Pro)     32 GB  ->  ~10 sims
+    mac-m4pro.metal (M4 Pro)      48 GB  ->  ~19 sims
+  (directional only — process/fd limits or CPU may bind first; verify on target)
+
+  (matplotlib not installed — skipping charts; table above is the result)
+
