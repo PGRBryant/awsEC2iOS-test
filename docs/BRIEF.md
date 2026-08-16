@@ -74,22 +74,39 @@ takeaway per chart.)*
 
 ## Page 5 — The operations reality (what it took to get here)
 
-*(The condensed Section-5 story from PAPER.md — as a timeline graphic +
-a "traps" table. This is the page engineers forward to each other.)*
+**The headline for this page: we spent ~12 hours of a 24-hour paid window
+getting to the first data row.** Not because the experiment was hard —
+because acquiring and preparing a cloud Mac is. Every item below cost a
+failed run or an hour of a billing meter, and every one is now encoded in
+this repo's scripts, so the next team pays none of it.
 
-- Timeline: quota request → 10-attempt overnight capacity hunt
-  (quota ≠ capacity) → host allocated 12:50Z → 50-min 'pending' before
-  launches accepted → lost-credential recovery via SSM → **no Xcode on
-  the AMI** (~1.5h install via an authenticated-browser workaround) →
-  first data at `[T+Xh]`. Setup tax: **~X of 24 paid hours.**
-  `[EC2-PENDING exact figures]`
-- The traps table: symptom → root cause → fix (placement syntax; pending
-  host reported as "does not exist"; double-allocation guard; missing sshd
-  host keys; headless LaunchAgent failure). Each cost a failed run or an
-  hour; all are now encoded in this repo's scripts so they cost nothing
-  next time.
-- No stored secrets anywhere: CI assumes an AWS role via GitHub OIDC
-  (including the undocumented numeric-ID `sub` claim trap and its fix).
+| # | Symptom | Root cause | Cost |
+|---|---|---|---|
+| 1 | `InsufficientHostCapacity`, repeatedly | **Quota ≠ capacity.** Approval grants permission, not inventory; the type existed in only 2 of 6 AZs | 10 automated attempts over ~6 h |
+| 2 | `InvalidHostId: does not exist` on a host we just allocated | A fresh Mac host sits `pending` ~50 min; AWS reports launches onto it with a misleading error | 1 failed run + 50 min |
+| 3 | `Unknown options: --tenancy` | Tenancy belongs *inside* `--placement`, not as a flag | 1 failed run |
+| 4 | Second host nearly allocated after a partial failure | No reuse guard — would have doubled a 24 h minimum bill | caught before spend |
+| 5 | No SSH possible at all | Lost `.pem`; AWS cannot re-issue. Recovered via SSM Session Manager (~30 min for the agent to see its new role) — plus the AMI shipped with **no sshd host keys**, so sshd was crash-looping | ~1 h |
+| 6 | `xcodebuild: requires Xcode` | **The AMI has no Xcode** (Apple licensing). The `xcodes` CLI installer compiles from source — which needs Xcode — and its login rejected credentials that worked in a browser. Solved by copying an authenticated download as cURL | ~1.5 h |
+| 7 | Ladder died at N=16; runner died with it | **Disk is a wall nobody models**: booted sims materialize ~0.5–1 GB each; ENOSPC killed the CI agent before results could publish | 1 lost ladder |
+| 8 | Grown EBS volume invisible to macOS | On EC2 Mac the capacity is cached until the instance **reboots** (never *stop* — that scrubs the host) | ~40 min |
+| 9 | Runner vanished after reboot | `svc.sh` installs a LaunchAgent, which needs a GUI login a headless box lacks; `nohup` dies on reboot. A system LaunchDaemon works — but starts with a bare PATH that hides every Homebrew tool | ~30 min |
+| 10 | Box accepted jobs, executed nothing, for 13 h | **The process wall takes the harness with it.** Failed boots leak simulator processes `simctl` won't reap; they accumulate until `fork()` fails for everything — the sweep, the CI runner, and any recovery job. Only a console reboot recovers it | ~13 h of billed idle |
+
+Two structural lessons for anyone building this:
+
+- **Results must be durable per trial, not collected at the end.** Twice
+  the host died holding data; both times a rescue path (publish to a git
+  branch, salvage before checkout cleans the workspace) is what saved the
+  run.
+- **The rig must survive the failure it measures.** A density experiment
+  drives hardware to collapse by design; if the collapse also kills the
+  observer, you get an outage instead of a data point.
+
+No stored secrets exist anywhere in this system: CI assumes an AWS role
+via GitHub OIDC, credentials expire in minutes, and revoking access means
+deleting one role. (Trap worth knowing: GitHub now stamps numeric IDs
+into the token's `sub` claim, so the textbook trust policy never matches.)
 
 ## Page 6 — What's possible today, and the GCP-shaped hole
 
@@ -108,27 +125,42 @@ a "traps" table. This is the page engineers forward to each other.)*
   per-minute macOS VMs on top of their own Mac fleets — they solved the
   slicing problem commercially; you pay the margin.
 
-**What a competitor (GCP or anyone) would need to be competitive — each
-requirement is a measured pain point from this study:**
-1. **Apple-silicon metal with per-hour-or-better effective granularity**
-   — VM-slice atop the 24h host lease (as managed vendors do) so
-   customers never see the minimum.
-2. **Capacity as a product**: reservable/queueable Mac capacity instead
-   of an `InsufficientHostCapacity` retry lottery (our hunt: 10 attempts,
-   ~6 hours, 2 usable AZs).
-3. **Developer-ready images**: Xcode + iOS runtimes preinstalled and
-   versioned (our single biggest avoidable time cost; Apple's EULA
-   permits preinstallation for licensed use — GitHub's runners prove it).
-4. **First-class CI integration**: OIDC-native, runner-registration
-   baked in, density-aware instance sizing (RAM/core ratios matched to
-   ~[MB/sim measured] per simulator).
-5. **Honest failure surfaces**: our "host does not exist" (= pending),
-   silent 50-min waits, and quota-vs-capacity confusion each cost real
-   money on a running meter.
-- **To surpass**: publish density benchmarks per instance type (this
-  study, as a product page); offer simulator-farm-as-a-service (sims are
-  processes — density is schedulable) so customers buy "N parallel
-  simulators," not "a Mac."
+**What a competitor (GCP or anyone) would need to be competitive.** Each
+requirement below is not a wish — it is a specific, measured failure we
+hit, with the cost attached (page 5):
+
+1. **Capacity as a product, not a lottery.** Reservable or queueable Mac
+   capacity with a published wait, instead of `InsufficientHostCapacity`
+   polling. *We burned 10 automated attempts over ~6 hours to get one
+   machine we already had quota for.* This is the single clearest
+   differentiator available: a "your Mac is ready at 14:00" guarantee
+   beats AWS outright.
+2. **Effective granularity better than 24 hours.** Slice the host lease
+   (as the managed Mac clouds already do commercially) so customers buy
+   the hour they need. *Our 24-hour minimum meant a ~12-hour setup tax
+   consumed half the window we paid for.*
+3. **Developer-ready images.** Xcode and iOS runtimes preinstalled and
+   versioned. *Our single largest avoidable cost (~1.5 h of paid time),
+   and GitHub's hosted runners prove it is licensable and doable.*
+   Ship images that are ready to run a test suite, not to install one.
+4. **Honest, actionable failure surfaces.** A pending host that reports
+   "does not exist"; a volume grow that silently requires a reboot; a
+   process-exhausted box that accepts jobs and runs nothing. *Each of
+   these read as "broken" and cost hours of diagnosis on a live meter.*
+   Surface state truthfully and the platform sells itself on trust.
+5. **CI-native integration.** OIDC-first auth (no stored keys), runner
+   registration built in, and **density-aware sizing guidance** —
+   because the naïve RAM math is off by 4× (page 3), customers cannot
+   size these machines correctly without vendor-published numbers.
+
+**To surpass, not just match:** sell **parallel simulators, not
+machines.** Simulators are processes; density is schedulable. A service
+where a phone team requests "40 iOS 26 simulators for 20 minutes" —
+billed by simulator-minute, spread across whatever metal the provider
+owns — matches what teams actually want (fast PR feedback) instead of
+what hardware happens to be. The measurements in this study are the
+capacity model such a service would need, and the fact that they were
+*this hard to obtain* is precisely why nobody has published them.
 
 ---
 
