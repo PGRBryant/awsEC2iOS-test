@@ -34,6 +34,10 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # Daemon-started runners have a bare system PATH; brew lives elsewhere
+      - name: Put Homebrew on PATH
+        run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+
       - name: Disk report (before)
         run: |
           df -h /

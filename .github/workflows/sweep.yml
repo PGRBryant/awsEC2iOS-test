@@ -43,6 +43,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The runner may be started by a LaunchDaemon, whose PATH is the bare
+      # system default — Homebrew tools (xcodegen) vanish without this.
+      - name: Put Homebrew on PATH
+        run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+
       - name: Show toolchain
         run: |
           sw_vers
