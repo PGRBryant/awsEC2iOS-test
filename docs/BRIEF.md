@@ -44,18 +44,46 @@
   scheduling discipline: batch density needs into windows. *(Chart:
   cost-per-useful-hour vs setup overhead.)*
 
-## Page 3 — What we measured and how (the method, digestibly)
+## Page 3 — What we measured and how
 
-- Three-tier "verify before you pay" pipeline (diagram): mocks → free
-  GitHub macOS runners → one paid 24h EC2 window. Seven real bugs caught
-  on free tiers; the paid box ran only proven code.
-- The harness in one paragraph: boot N simulators, install a real SwiftUI
-  app, verify each one actually *renders* (booted ≠ working), sample
-  RAM/CPU/processes every second, tear down, repeat. Load profiles: IDLE /
-  ANIMATE (app-like animation) / INFER (real on-device OCR inference).
-- Free-tier calibration results: RAM-per-simulator model
-  (~267/~356/~1080 MB by profile) → predicted ceilings for every EC2 Mac
-  size. Today's run graded those predictions: `[EC2-PENDING scorecard]`.
+**The experiment in one paragraph.** Boot N simulators. Install a real
+SwiftUI app in each. Verify every one actually *rendered a frame* — not
+merely that it reported "Booted," because simulators routinely do the
+latter without the former. Sample host memory, load, swap, and process
+count every second throughout. Tear the whole set down, repeat for
+variance, then step N up and do it again until something breaks — and
+record *what* broke. The largest N that is clean across every trial is
+the **reliable working point**; the first N that fails is the **hard
+ceiling**. Both matter: teams should plan against the former and know
+the latter.
+
+**Load profiles, because idle simulators aren't a workload.** The same
+ladder runs under `IDLE` (platform floor), `ANIMATE` (continuous
+animation plus timer work), `SCROLL` (list churn), and `INFER` — which
+runs **real on-device neural inference** via Apple's Vision text
+recognizer. The model ships with the OS, so nothing is bundled and the
+app stays honest; every inference is verified by requiring real text
+back. This matters commercially: AI-feature suites are becoming
+standard, and their density is a different number from idle density.
+
+**Verify before you pay — three tiers.**
+
+| Tier | Hardware | Cost | What it caught |
+|---|---|---|---|
+| Mocks | any OS, fake `simctl` with fault injection | $0 | harness logic; a `pipefail` bug that silently misreported boots |
+| Hosted macOS runners | 3 cores / 7 GB, real Apple silicon | $0 | 7 real bugs — device/runtime pairing, a red suite hiding in a green job, bash-3.2 incompatibilities, artifact-egress limits |
+| EC2 Mac | M2 Pro / 12 cores / 32 GB, one 24 h host | ~$1.5–2/h | the actual answer — and four platform walls the free tiers cannot reach |
+
+The paid box only ever ran code that was already proven, which is why
+every failure it produced was a *finding* rather than a bug.
+
+**The calibration scorecard — the method's own report card.** The free
+tier predicted ~90 IDLE simulators on this machine from a 267 MB/sim
+fit. The machine held **16**, at **1,115 MB/sim**. The free tier was not
+wrong about the harness; it was wrong about the hardware, because at
+N ≤ 3 on a 7 GB runner simulators share warm OS caches and never carry a
+full working set. **Cheap tiers prove your pipeline. Only the target
+hardware sizes your fleet.** `[EC2-PENDING: INFER + shard rows]`
 
 ## Page 4 — Results (the four charts)
 
