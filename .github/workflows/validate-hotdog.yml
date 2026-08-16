@@ -9,7 +9,9 @@ on:
 jobs:
   hotdog:
     runs-on: macos-15
-    timeout-minutes: 45
+    # hosted-Mac speed variance is huge (learned twice now); give slack and
+    # keep the scope minimal — N=1 alone answers "does the classifier see it?"
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -18,11 +20,11 @@ jobs:
           command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
           ./scripts/bootstrap.sh
 
-      - name: Mini HOTDOG sweep (N=1,2)
+      - name: Mini HOTDOG sweep (N=1)
         run: |
           ./harness/sweep.sh \
             --app app/build/Build/Products/Debug-iphonesimulator/SimDensity.app \
-            --levels "1 2" --repeats 1 --profile HOTDOG \
+            --levels "1" --repeats 1 --profile HOTDOG \
             --boot-timeout 420 --out results/hotdog
 
       - name: Verdict
