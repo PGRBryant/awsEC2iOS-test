@@ -1,5 +1,37 @@
 # Run day — 24 hours on a mac2-m2pro.metal (M2 Pro · 12 cores · 32 GB)
 
+> ## Lessons from the actual run day (2026-08-15/16) — read BEFORE allocating
+>
+> Each of these cost us real clock on a billing host. Budget for them:
+>
+> 1. **Capacity is a lottery.** Quota approval ≠ a Mac existing. 10
+>    hourly AZ-hunting attempts (~6h) before allocation succeeded.
+> 2. **A fresh host sits `pending` ~50+ min** before it accepts launches —
+>    and AWS reports a launch onto a pending host as `InvalidHostId: does
+>    not exist`. provision.sh now waits automatically.
+> 3. **The AMI has NO Xcode** (Apple licensing). Budget ~1–1.5h: browser
+>    login to developer.apple.com on a trusted machine → DevTools "Copy as
+>    cURL" on the .xip download → run that curl on the Mac → `xip --expand`
+>    (~20 min, silent) → `sudo xcodebuild -runFirstLaunch` →
+>    `xcodebuild -downloadPlatform iOS`. The `xcodes` brew formula
+>    compiles from source (needs Xcode — circular) and its CLI auth is
+>    flaky; use the prebuilt release binary or the cURL trick.
+> 4. **Disk is a real wall.** Booted sims materialize ~0.5–1+ GB each;
+>    the default 100 GB volume died at N=16 and took the runner with it.
+>    Grow the EBS volume in the console (400 GB ≈ $1/day) — and note the
+>    grow is **invisible to macOS until you REBOOT the instance** (reboot
+>    is safe; STOP is not — stop triggers host scrubbing). Then run the
+>    `resize-disk` action of `ec2-maintenance.yml`. sweep.sh now stops
+>    gracefully at a disk floor (`DISK_FLOOR_GB`, default 8).
+> 5. **Run the Actions runner as a LaunchDaemon** (`install-runner-daemon`
+>    action), not `svc.sh` (LaunchAgents need a GUI login that headless
+>    boxes lack) and not nohup (dies on reboot). Daemon PATH is bare —
+>    workflows must add `/opt/homebrew/bin` to `GITHUB_PATH` (done).
+> 6. **Lost .pem = no re-download.** Recovery: attach an SSM role to the
+>    running instance → Session Manager shell (~30 min for the agent to
+>    see credentials) → `sudo ssh-keygen -A` if sshd host keys are missing
+>    → add a new authorized key. Never stop the instance for access.
+
 The clock starts at allocation and cannot stop for 24 hours, so the day is a
 schedule, not a vibe. Everything below is copy-paste; timeboxes are loose but
 the ordering matters (cheap validation first, expensive sweeps once trusted,
