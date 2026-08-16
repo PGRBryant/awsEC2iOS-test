@@ -76,8 +76,14 @@ make the demo mirror that use case, still without AWS spend:
 
 ## Phase 4 — CI on the paid box
 
-- ✅ Dispatch workflow `sweep.yml` (N / repeats / device inputs, artifacts)
-- ⬜ Self-hosted Actions runner registered on the EC2 Mac
+- ✅ Dispatch workflow `sweep.yml` — upgraded to drive the whole run day
+  remotely: mode (sweep/shard), profile, boot timeout; results published
+  append-only to the `ec2-results` branch
+- ✅ Self-hosted Actions runner registered on the EC2 Mac; made
+  boot-persistent via a system LaunchDaemon (svc.sh can't work headless;
+  daemon PATH quirk fixed in workflows)
+- ✅ `ec2-maintenance.yml`: dispatchable disk report/cleanup, stranded-
+  results rescue, APFS resize — the box needs no SSH to operate
 
 ## Phase 5 — The experiment
 
