@@ -269,13 +269,20 @@ struct HotdogPane: View {
     }
 
     private static func emojiImage(_ emoji: String) -> UIImage {
+        // Apple Color Emoji is a bitmap font: huge point sizes can silently
+        // draw NOTHING (validated the hard way — a blank canvas classifies as
+        // "night_sky/moon"). 150pt renders reliably; draw centered.
         let size = CGSize(width: 480, height: 480)
+        let font = UIFont.systemFont(ofSize: 150)
         return UIGraphicsImageRenderer(size: size).image { ctx in
             UIColor.white.setFill()
             ctx.fill(CGRect(origin: .zero, size: size))
-            (emoji as NSString).draw(
-                at: CGPoint(x: 60, y: 60),
-                withAttributes: [.font: UIFont.systemFont(ofSize: 320)])
+            let attrs: [NSAttributedString.Key: Any] = [.font: font]
+            let s = (emoji as NSString)
+            let m = s.size(withAttributes: attrs)
+            s.draw(at: CGPoint(x: (size.width - m.width) / 2,
+                               y: (size.height - m.height) / 2),
+                   withAttributes: attrs)
         }
     }
 
