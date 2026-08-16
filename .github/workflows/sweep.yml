@@ -24,7 +24,7 @@ on:
       profile:
         description: 'Load profile (sweep only)'
         type: choice
-        options: [IDLE, ANIMATE, SCROLL, INFER]
+        options: [IDLE, ANIMATE, SCROLL, INFER, HOTDOG]
       device:
         description: 'Simulator device type (auto = newest iPhone)'
         default: 'auto'

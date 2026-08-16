@@ -327,15 +327,26 @@ run_trial() {
   [ "$boots_ok" -eq "$n" ] || : # failure already set above
   if [ -z "$failure" ] && [ "$renders_ok" -lt "$n" ]; then failure="partial_render"; fi
 
-  # edge-AI throughput: let the inference loops settle, then sum per-sim rates
+  # edge-AI throughput: let the inference loops settle, then sum per-sim rates.
+  # HOTDOG rates count only CORRECT classifications; the raw per-sim metrics
+  # (incl. accuracy) are archived to metrics-details.jsonl for analysis.
   local infer_ops=0
-  if [ "$PROFILE" = "INFER" ] && [ "$renders_ok" -gt 0 ]; then
+  case "$PROFILE" in INFER|HOTDOG)
+  if [ "$renders_ok" -gt 0 ]; then
     sleep 10
     infer_ops="$(
       for u in "${udids[@]}"; do is_booted "$u" && sim_infer_rate "$u"; done |
       python3 -c 'import sys; print(round(sum(float(l) for l in sys.stdin if l.strip()), 2))'
     )"
+    for u in "${udids[@]}"; do
+      d="$(simctl get_app_container "$u" "$BUNDLE_ID" data 2>/dev/null || true)"
+      if [ -n "$d" ] && [ -f "$d/Documents/metrics.json" ]; then
+        printf '{"level":%s,"repeat":%s,"sim":"%s","metrics":%s}\n' \
+          "$n" "$rep" "$u" "$(cat "$d/Documents/metrics.json")" >> "$OUT_DIR/metrics-details.jsonl"
+      fi
+    done
   fi
+  ;; esac
 
   local metrics; metrics="$(sample_metrics)"
   record_row "$n" "$rep" "$boots_ok" "$installs_ok" "$launches_ok" "$renders_ok" "$boot_wall" "$failure" "$metrics" "$infer_ops"

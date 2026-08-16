@@ -12,8 +12,14 @@ import Vision
 //             generated images; models ship with the OS, nothing bundled).
 //             Reports inferences/sec on screen and to Documents/metrics.json,
 //             which the host reads via `simctl get_app_container`.
+//   HOTDOG  — the "Not Hotdog" protocol: on-device image *classification*
+//             with known ground truth. Renders a hotdog or decoy subject,
+//             asks Vision's built-in ~1,300-label classifier what it sees,
+//             and scores the binary verdict — so accuracy under load is
+//             measured, not assumed. ops_per_sec counts only CORRECT verdicts.
 enum LoadProfile: String {
-    case idle = "IDLE", animate = "ANIMATE", scroll = "SCROLL", infer = "INFER"
+    case idle = "IDLE", animate = "ANIMATE", scroll = "SCROLL", infer = "INFER",
+         hotdog = "HOTDOG"
 
     static var current: LoadProfile {
         LoadProfile(rawValue: ProcessInfo.processInfo
@@ -35,6 +41,7 @@ struct ContentView: View {
             case .animate: AnimatePane()
             case .scroll: ScrollPane()
             case .infer: InferPane()
+            case .hotdog: HotdogPane()
             }
             VStack(spacing: 12) {
                 Text("SIM DENSITY")
@@ -196,6 +203,96 @@ struct InferPane: View {
         guard let dir = FileManager.default.urls(
             for: .documentDirectory, in: .userDomainMask).first else { return }
         let payload = #"{"ops_per_sec": \#(String(format: "%.3f", rate)), "total": \#(total)}"#
+        try? payload.write(to: dir.appendingPathComponent("metrics.json"),
+                           atomically: true, encoding: .utf8)
+    }
+}
+
+// The "Not Hotdog" protocol. Each iteration: draw a subject (hotdog emoji or
+// a decoy — half of them adversarial foods), run Vision's built-in image
+// classifier, and score the binary hotdog/not-hotdog verdict against the
+// known ground truth. Two things OCR can't give us: a second, heavier model
+// class, and per-iteration CORRECTNESS — the accuracy-under-load curve.
+struct HotdogPane: View {
+    @State private var rate = 0.0
+    @State private var accuracy = 0.0
+    @State private var subject = "🌭"
+    @State private var verdict = "…"
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Text(subject).font(.system(size: 96))
+            Text(verdict)
+                .font(.system(.title2, design: .monospaced).weight(.bold))
+                .foregroundStyle(.white)
+                .accessibilityIdentifier("sd-hotdog-verdict")
+            Text(String(format: "%.2f correct/s · acc %.0f%%", rate, accuracy * 100))
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.85))
+                .accessibilityIdentifier("sd-infer-rate")
+                .padding(.bottom, 50)
+        }
+        .task { await classifyLoop() }
+    }
+
+    private func classifyLoop() async {
+        // deterministic 50/50 hotdog/decoy split; decoys mix adversarial
+        // foods (pizza, burger, taco) with easy negatives (car, cat, ball)
+        let decoys = ["🍕", "🍔", "🌮", "🚗", "🐱", "⚽️"]
+        let start = Date()
+        var attempts = 0
+        var correct = 0
+        while !Task.isCancelled {
+            let isHotdog = attempts % 2 == 0
+            let subj = isHotdog ? "🌭" : decoys[(attempts / 2) % decoys.count]
+            let says = Self.classifierSaysHotdog(Self.emojiImage(subj))
+            attempts += 1
+            if says == isHotdog { correct += 1 }
+            if attempts % 5 == 0 {
+                let elapsed = Date().timeIntervalSince(start)
+                let r = elapsed > 0 ? Double(correct) / elapsed : 0
+                let acc = Double(correct) / Double(attempts)
+                await MainActor.run {
+                    rate = r; accuracy = acc; subject = subj
+                    verdict = says ? "HOTDOG ✅" : "NOT HOTDOG ❌"
+                }
+                Self.writeMetrics(rate: r, correct: correct, attempts: attempts)
+            }
+            await Task.yield()
+        }
+    }
+
+    private static func emojiImage(_ emoji: String) -> UIImage {
+        let size = CGSize(width: 480, height: 480)
+        return UIGraphicsImageRenderer(size: size).image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            (emoji as NSString).draw(
+                at: CGPoint(x: 60, y: 60),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 320)])
+        }
+    }
+
+    private static func classifierSaysHotdog(_ image: UIImage) -> Bool {
+        guard let cg = image.cgImage else { return false }
+        let request = VNClassifyImageRequest()
+        let handler = VNImageRequestHandler(cgImage: cg)
+        guard (try? handler.perform([request])) != nil else { return false }
+        // taxonomy label normalization: "hot dog" / "hot_dog" / "hotdog"
+        return (request.results ?? []).prefix(10).contains { obs in
+            let id = obs.identifier.lowercased()
+                .replacingOccurrences(of: "_", with: "")
+                .replacingOccurrences(of: " ", with: "")
+            return id.contains("hotdog") && obs.confidence > 0.05
+        }
+    }
+
+    private static func writeMetrics(rate: Double, correct: Int, attempts: Int) {
+        guard let dir = FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask).first else { return }
+        let acc = attempts > 0 ? Double(correct) / Double(attempts) : 0
+        let payload = #"{"ops_per_sec": \#(String(format: "%.3f", rate)), "total": \#(correct), "attempts": \#(attempts), "accuracy": \#(String(format: "%.3f", acc))}"#
         try? payload.write(to: dir.appendingPathComponent("metrics.json"),
                            atomically: true, encoding: .utf8)
     }

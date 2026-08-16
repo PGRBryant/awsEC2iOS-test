@@ -1,0 +1,44 @@
+# Free validation of the HOTDOG profile on a GitHub-hosted Mac before any
+# paid EC2 time runs it: does Vision's built-in classifier actually recognize
+# an emoji hotdog, and does accuracy come out credible? Verify-before-pay.
+name: Validate HOTDOG profile
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hotdog:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap
+        run: |
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+          ./scripts/bootstrap.sh
+
+      - name: Mini HOTDOG sweep (N=1,2)
+        run: |
+          ./harness/sweep.sh \
+            --app app/build/Build/Products/Debug-iphonesimulator/SimDensity.app \
+            --levels "1 2" --repeats 1 --profile HOTDOG \
+            --boot-timeout 420 --out results/hotdog
+
+      - name: Verdict
+        run: |
+          cat results/hotdog/results.csv
+          echo "== per-sim metrics (accuracy is the number that matters) =="
+          cat results/hotdog/metrics-details.jsonl || echo "NO METRICS — classifier never produced a scored verdict"
+          # gate: every level must report a nonzero correct-classification rate
+          python3 - <<'PY'
+          import csv, json, sys
+          rows = list(csv.DictReader(open("results/hotdog/results.csv")))
+          bad = [r["level"] for r in rows if float(r["infer_ops"] or 0) <= 0]
+          assert rows and not bad, f"zero correct-classification rate at N={bad}"
+          accs = [json.loads(l)["metrics"].get("accuracy", 0)
+                  for l in open("results/hotdog/metrics-details.jsonl")]
+          print(f"accuracies: {accs}")
+          assert accs and min(accs) >= 0.6, f"accuracy too low to be a credible test: {accs}"
+          print("HOTDOG protocol validated: classifier sees the hotdog.")
+          PY

@@ -318,6 +318,12 @@ def edgeai_panel():
         '<li><b>Throughput is the metric:</b> each sim reports its inferences/sec; the '
         'harness aggregates across N sims to find where added simulators stop adding '
         'AI throughput — the capacity-planning number for edge-AI test suites.</li>'
+        '<li><b>The &ldquo;Not Hotdog&rdquo; protocol (HOTDOG profile):</b> a second, '
+        'harder model class — Vision\'s built-in ~1,300-label image classifier '
+        '(<code>VNClassifyImageRequest</code>) judges generated hotdog-vs-decoy '
+        'images against known ground truth, half the decoys adversarial foods. '
+        'Only <i>correct</i> verdicts count, so this curve measures '
+        '<b>accuracy under load</b>, not just speed.</li>'
         '</ul>')
     return ('<figure class="edgeai"><figcaption>Inside the edge-AI (INFER) profile'
             '<span class="note">what every simulator is actually doing under AI load</span>'
