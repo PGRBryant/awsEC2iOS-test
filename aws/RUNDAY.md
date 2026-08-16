@@ -37,18 +37,35 @@ schedule, not a vibe. Everything below is copy-paste; timeboxes are loose but
 the ordering matters (cheap validation first, expensive sweeps once trusted,
 teardown armed before you sleep).
 
-Predicted ceilings for this box (from the hosted-runner RAM fits — the whole
-point of today is to check them):
+### Predictions vs what actually happened (2026-08-15/16)
 
-| profile | MB/sim (measured) | predicted ceiling (32 GB, 85% usable) |
-|---|---|---|
-| IDLE    | ~267  | ~90 sims |
-| ANIMATE | ~356  | ~63 sims |
-| INFER   | ~1080 | ~22 sims |
+The hosted-runner fits predicted this box would hold ~90 IDLE sims. **It
+held 16.** Keep the original numbers visible — being wrong in public is
+the point of the exercise:
 
-Watch for the other walls arriving first: 12 CPU cores, and the ~2,500
-process-per-user limit (each sim spawns 15–25 processes, so expect trouble
-past ~N=80 on IDLE).
+| profile | hosted-runner fit | predicted ceiling | **measured on this box** |
+|---|---|---|---|
+| IDLE    | ~267 MB/sim  | ~90 sims | **~1,115 MB/sim → 16 clean, 24 won't boot** |
+| ANIMATE | ~356 MB/sim  | ~63 sims | contaminated run (see below) |
+| INFER   | ~1,080 MB/sim | ~22 sims | `[pending]` |
+
+Why the miss: at N≤3 on a 7 GB runner, simulators share warm OS caches and
+never carry a full working set. Extrapolating from that regime is honest
+math on an insufficient range — **free-tier calibration validates the
+harness, not the hardware.**
+
+Both walls arrive together here, not sequentially: at N=16 the box is 15 GB
+into swap *and* running ~4,200 processes (≈260/sim, not the 15–25 the docs
+suggest), with 315 s boot walls. At N=24 `launchd_sim` cannot bind a session
+at all.
+
+**The wall takes the harness with it.** A failed boot leaks simulator
+processes that `simctl shutdown`/`delete` do not reap; they accumulate until
+`fork()` fails for *everything* — the sweep, the CI runner, and any recovery
+job you dispatch afterwards. The box then accepts work and executes nothing,
+recoverable only by a console **Reboot** (never Stop). sweep.sh now hard-
+cleans after every level and refuses to start one above `PROC_CEILING`; if
+you see `failure_mode=process_wall` in a CSV, that guard just saved a host.
 
 ## T+0:00 — allocate (the clock starts)
 
