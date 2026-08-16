@@ -243,12 +243,16 @@ struct HotdogPane: View {
         let start = Date()
         var attempts = 0
         var correct = 0
+        var lastLabels = ""
         while !Task.isCancelled {
             let isHotdog = attempts % 2 == 0
             let subj = isHotdog ? "🌭" : decoys[(attempts / 2) % decoys.count]
-            let says = Self.classifierSaysHotdog(Self.emojiImage(subj))
+            let (says, labels) = Self.classify(Self.emojiImage(subj))
             attempts += 1
             if says == isHotdog { correct += 1 }
+            // keep the classifier's actual words for the hotdog case — the
+            // diagnostic that separates "label mismatch" from "clip-art gap"
+            if isHotdog { lastLabels = labels }
             if attempts % 5 == 0 {
                 let elapsed = Date().timeIntervalSince(start)
                 let r = elapsed > 0 ? Double(correct) / elapsed : 0
@@ -257,7 +261,8 @@ struct HotdogPane: View {
                     rate = r; accuracy = acc; subject = subj
                     verdict = says ? "HOTDOG ✅" : "NOT HOTDOG ❌"
                 }
-                Self.writeMetrics(rate: r, correct: correct, attempts: attempts)
+                Self.writeMetrics(rate: r, correct: correct, attempts: attempts,
+                                  labels: lastLabels)
             }
             await Task.yield()
         }
@@ -274,25 +279,36 @@ struct HotdogPane: View {
         }
     }
 
-    private static func classifierSaysHotdog(_ image: UIImage) -> Bool {
-        guard let cg = image.cgImage else { return false }
+    // Returns the verdict plus the top labels the classifier actually said —
+    // "hotdog-ish" accepts the taxonomy's synonyms (hot dog / frankfurter /
+    // sausage family) so a naming mismatch can't masquerade as a model miss.
+    private static func classify(_ image: UIImage) -> (Bool, String) {
+        guard let cg = image.cgImage else { return (false, "") }
         let request = VNClassifyImageRequest()
         let handler = VNImageRequestHandler(cgImage: cg)
-        guard (try? handler.perform([request])) != nil else { return false }
-        // taxonomy label normalization: "hot dog" / "hot_dog" / "hotdog"
-        return (request.results ?? []).prefix(10).contains { obs in
+        guard (try? handler.perform([request])) != nil else { return (false, "") }
+        let top = Array((request.results ?? []).prefix(8))
+        let labels = top.map {
+            "\($0.identifier):\(String(format: "%.2f", $0.confidence))"
+        }.joined(separator: ",")
+        let says = top.contains { obs in
             let id = obs.identifier.lowercased()
                 .replacingOccurrences(of: "_", with: "")
                 .replacingOccurrences(of: " ", with: "")
-            return id.contains("hotdog") && obs.confidence > 0.05
+            return (id.contains("hotdog") || id.contains("frankfurter")
+                    || id.contains("sausage") || id.contains("chilidog"))
+                && obs.confidence > 0.05
         }
+        return (says, labels)
     }
 
-    private static func writeMetrics(rate: Double, correct: Int, attempts: Int) {
+    private static func writeMetrics(rate: Double, correct: Int, attempts: Int,
+                                     labels: String) {
         guard let dir = FileManager.default.urls(
             for: .documentDirectory, in: .userDomainMask).first else { return }
         let acc = attempts > 0 ? Double(correct) / Double(attempts) : 0
-        let payload = #"{"ops_per_sec": \#(String(format: "%.3f", rate)), "total": \#(correct), "attempts": \#(attempts), "accuracy": \#(String(format: "%.3f", acc))}"#
+        let safe = labels.replacingOccurrences(of: "\"", with: "")
+        let payload = #"{"ops_per_sec": \#(String(format: "%.3f", rate)), "total": \#(correct), "attempts": \#(attempts), "accuracy": \#(String(format: "%.3f", acc)), "hotdog_labels": "\#(safe)"}"#
         try? payload.write(to: dir.appendingPathComponent("metrics.json"),
                            atomically: true, encoding: .utf8)
     }
