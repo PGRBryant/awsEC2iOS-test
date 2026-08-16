@@ -154,13 +154,61 @@ fix → time/money cost.
   source (which requires Xcode — circular), and its CLI auth rejected a
   password that worked in the browser. Budget: **~1–1.5 h of the 24h
   window.**
+- **Disk is a wall nobody models**: booted sims materialize ~0.5–1+ GB
+  each; the default 100 GB volume filled at N=16 and the resulting
+  ENOSPC killed the *runner itself* (its logs couldn't be written), so
+  the job died before results could publish. Fixes that are now
+  permanent: a disk-floor guard in the harness (`failure_mode=disk`,
+  graceful stop), a rescue-stranded-results maintenance action, and —
+  the undocumented kicker — **an EBS volume grow is invisible to macOS
+  until the instance reboots** (the Thunderbolt/Nitro path caches
+  capacity; `diskutil` reports "new size must be different" until then).
+- **The process wall kills the observer too**: the ANIMATE ladder
+  exhausted the per-user process table (~4,200 seen at N=16 IDLE;
+  ANIMATE crossed the limit near N≈16–20) — at which point `fork()`
+  fails for *everything*, including the CI runner trying to report the
+  failure and any recovery job dispatched afterwards. The box accepts
+  work but cannot execute a single step; the only recovery is a console
+  reboot. Density experiments must assume the harness dies *with* the
+  patient — hence results streamed per-trial to durable storage, not
+  collected at the end.
+- **Headless service management**: `svc.sh` installs a LaunchAgent,
+  which requires a GUI login session a headless box never has; `nohup`
+  dies on reboot. A system LaunchDaemon (RunAtLoad + KeepAlive) is the
+  working answer — with the trap that daemons get a bare system PATH,
+  silently hiding every Homebrew tool from workflows.
 - **Total overhead accounting**: `[EC2-PENDING]` wall-clock from
   allocation to first data row; the honest "setup tax" on a 24h window.
 
+### Sidebar: the fixture-fidelity trap (what killed the Not-Hotdog test)
+
+We added a fifth profile — classify a rendered hotdog-or-decoy image
+with Vision's built-in ~1,300-label classifier, scored against known
+ground truth, to measure *accuracy* under density, not just throughput.
+It validated at exactly 50% accuracy: the classifier never said hotdog.
+The label log told a two-act story: (1) Apple Color Emoji is a bitmap
+font and a 320 pt draw silently rendered **nothing** — the classifier
+was labeling a blank canvas ("night_sky", "moon"); (2) after fixing the
+render, the classifier *still* returned byte-identical label sets for
+every input — `VNClassifyImageRequest` does not produce meaningful
+output in this headless-simulator pipeline, though the OCR network
+(`VNRecognizeTextRequest`) demonstrably does. Four validation rounds,
+all on free hosted runners, $0 of paid time. Two lessons: **an AI test
+is only as real as the pixels that reach the model** (the neural cousin
+of "booted ≠ working"), and **not every on-device model that works on
+hardware works in the simulator — verify per-API before betting a test
+suite on it.**
+
 ## 6. Results on the EC2 Mac `[EC2-PENDING]`
 
-- 6.1 IDLE ladder: the headline curve; working point and hard ceiling;
-  what broke first (RAM vs process wall vs CPU).
+- 6.1 IDLE ladder — **measured** (mac2-m2pro.metal, iPhone-17e sims,
+  iOS 26.5): N=1–16 all boot, install, launch, and render across both
+  trials; N=24 never boots (`launchd_sim` cannot bind a session). RAM:
+  **~1,115 MB per booted sim over an 11.8 GB base** (vs 267 MB/sim
+  predicted from the hosted tier — a 4× miss, see 6.6). At N=16 the box
+  is already 15 GB into swap with 315 s boot walls and ~4,200 processes.
+  Reliable working point ~12–16; hard ceiling < 24; the RAM and process
+  walls arrive together on this configuration.
 - 6.2 ANIMATE ladder.
 - 6.3 INFER ladder: aggregate inf/s vs N — where inference throughput
   plateaus with 12 real cores (it never plateaued on 3).
@@ -168,9 +216,15 @@ fix → time/money cost.
   couldn't show; wall-time vs shard count vs ideal.
 - 6.5 Timelines at the ceiling: what dying looks like (RAM exhaustion
   pattern vs boot-storm pattern).
-- 6.6 Predictions vs reality: the hosted-runner RAM model said ~90/~63/~22
-  — how close was free-tier calibration? *(This is the paper's
-  methodological payoff.)*
+- 6.6 Predictions vs reality — **the calibration transfer FAILED, and
+  that is the finding**: the hosted-runner model (267 MB/sim, ceiling
+  ~90) missed by 4× (1,115 MB/sim, ceiling <24). Why: at N≤3 on a 7 GB
+  runner, sims share warm OS caches and never carry full working sets;
+  extrapolating from that regime is honest math on an insufficient
+  range. The method lesson: **free-tier calibration validates the
+  harness, not the hardware** — real capacity planning needs at least
+  one measurement in the target density regime. `[EC2-PENDING: ANIMATE/
+  INFER scorecard rows]`
 
 ## 7. Analysis: CI economics `[EC2-PENDING]`
 
