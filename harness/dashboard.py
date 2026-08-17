@@ -257,6 +257,7 @@ def build(results_dir, shard_csv, out_path):
 
     html = TEMPLATE.format(
         device=device, runtime=runtime, profile=profile,
+        edgeai=edgeai_panel(),
         tiles="".join(tiles), charts="\n".join(charts),
         pred=(f'<figure class="tablefig"><figcaption>Predicted RAM-bound ceiling by EC2 instance '
               f'({USABLE_RAM_FRACTION:.0%} usable)</figcaption><div class="scroll"><table>'
@@ -266,6 +267,67 @@ def build(results_dir, shard_csv, out_path):
     with open(out_path, "w") as f:
         f.write(html)
     print("dashboard written to", out_path)
+
+
+def edgeai_panel():
+    """The INFER-profile methodology, as a pipeline diagram + facts.
+
+    This is the part of the story a chart can't carry: what "edge-AI load"
+    concretely means inside every simulator. Rendered on every dashboard so
+    each snapshot is self-explanatory.
+    """
+    # box geometry: (x, w, title, sub1, sub2, accent)
+    boxes = [
+        (0,   190, "SYNTHESIZE", "unique text image", "per iteration", 0),
+        (230, 240, "VISION OCR", "VNRecognizeTextRequest", "on-device neural net", 1),
+        (510, 180, "VERIFY", "result must contain", "recognized text", 0),
+        (730, 180, "METRICS", "metrics.json in the", "app's sandbox", 0),
+        (950, 190, "COLLECT", "simctl get_app_container", "→ CSV → charts", 0),
+    ]
+    svg = ['<svg viewBox="0 0 1140 118" style="min-width:820px" role="img" '
+           'aria-label="Edge-AI pipeline: synthesize image, Vision OCR, verify, metrics, collect">']
+    for x, w, title, s1, s2, accent in boxes:
+        stroke = TEAL if accent else "var(--line)"
+        sw = "2" if accent else "1.2"
+        svg.append(f'<rect x="{x+1}" y="12" width="{w-2}" height="92" rx="10" '
+                   f'fill="var(--surface)" stroke="{stroke}" stroke-width="{sw}"/>')
+        tc = TEAL if accent else "var(--ink-soft)"
+        svg.append(f'<text x="{x+w/2}" y="42" text-anchor="middle" '
+                   f'style="font:600 13px var(--mono)" fill="{tc}">{title}</text>')
+        svg.append(f'<text x="{x+w/2}" y="63" text-anchor="middle" '
+                   f'style="font:11px var(--mono)" fill="var(--muted)">{s1}</text>')
+        svg.append(f'<text x="{x+w/2}" y="80" text-anchor="middle" '
+                   f'style="font:11px var(--mono)" fill="var(--muted)">{s2}</text>')
+    for x0, x1 in [(190, 230), (470, 510), (690, 730), (910, 950)]:
+        mid = (x0 + x1) / 2
+        svg.append(f'<line x1="{x0+4}" y1="58" x2="{x1-10}" y2="58" '
+                   f'stroke="var(--muted)" stroke-width="1.5"/>')
+        svg.append(f'<path d="M {x1-10} 53 L {x1-3} 58 L {x1-10} 63 Z" fill="var(--muted)"/>')
+        _ = mid
+    svg.append('</svg>')
+    facts = (
+        '<ul class="facts">'
+        '<li><b>Real neural inference, not a stand-in:</b> each iteration runs Apple\'s '
+        'Vision text-recognition network (<code>VNRecognizeTextRequest</code>, fast path) '
+        'inside the simulator — the same API an app ships with for on-device AI.</li>'
+        '<li><b>Zero bundled models:</b> the network ships with the OS, so the test app '
+        'stays tiny and install times stay honest.</li>'
+        '<li><b>Every inference is verified:</b> an iteration only counts when the '
+        'recognizer returns actual text from the synthesized image — no idle-loop '
+        'inflation.</li>'
+        '<li><b>Throughput is the metric:</b> each sim reports its inferences/sec; the '
+        'harness aggregates across N sims to find where added simulators stop adding '
+        'AI throughput — the capacity-planning number for edge-AI test suites.</li>'
+        '<li><b>The &ldquo;Not Hotdog&rdquo; protocol (HOTDOG profile):</b> a second, '
+        'harder model class — Vision\'s built-in ~1,300-label image classifier '
+        '(<code>VNClassifyImageRequest</code>) judges generated hotdog-vs-decoy '
+        'images against known ground truth, half the decoys adversarial foods. '
+        'Only <i>correct</i> verdicts count, so this curve measures '
+        '<b>accuracy under load</b>, not just speed.</li>'
+        '</ul>')
+    return ('<figure class="edgeai"><figcaption>Inside the edge-AI (INFER) profile'
+            '<span class="note">what every simulator is actually doing under AI load</span>'
+            f'</figcaption><div class="scroll">{"".join(svg)}</div>{facts}</figure>')
 
 
 TEMPLATE = '''<!doctype html><html><head><meta charset="utf-8">
@@ -315,7 +377,10 @@ th,td{{text-align:left;padding:6px 12px;border-bottom:1px solid var(--line)}}
 th{{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}}
 td.num{{font-family:var(--mono);font-variant-numeric:tabular-nums}}
 .chip{{font-family:var(--mono);font-size:10.5px;background:#c53030;color:#fff;border-radius:99px;padding:1px 8px}}
-.tablefig,.results{{margin-top:14px}}
+.tablefig,.results,.edgeai{{margin-top:14px}}
+.edgeai .facts{{margin:12px 0 2px;padding-left:20px;font-size:13px;color:var(--ink-soft)}}
+.edgeai .facts li{{margin-bottom:6px}}
+.edgeai .facts code{{font-family:var(--mono);font-size:12px;color:var(--ink)}}
 #tip{{position:fixed;pointer-events:none;background:var(--ink);color:var(--ground);
   font:11.5px var(--mono);padding:5px 9px;border-radius:6px;opacity:0;transition:opacity .12s;z-index:9;white-space:nowrap}}
 </style></head><body>
@@ -326,6 +391,7 @@ td.num{{font-family:var(--mono);font-variant-numeric:tabular-nums}}
 <div class="grid2">
 {charts}
 </div>
+{edgeai}
 {pred}
 <figure class="results"><figcaption>All trials</figcaption>{table}</figure>
 </div>

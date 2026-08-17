@@ -327,15 +327,26 @@ run_trial() {
   [ "$boots_ok" -eq "$n" ] || : # failure already set above
   if [ -z "$failure" ] && [ "$renders_ok" -lt "$n" ]; then failure="partial_render"; fi
 
-  # edge-AI throughput: let the inference loops settle, then sum per-sim rates
+  # edge-AI throughput: let the inference loops settle, then sum per-sim rates.
+  # HOTDOG rates count only CORRECT classifications; the raw per-sim metrics
+  # (incl. accuracy) are archived to metrics-details.jsonl for analysis.
   local infer_ops=0
-  if [ "$PROFILE" = "INFER" ] && [ "$renders_ok" -gt 0 ]; then
+  case "$PROFILE" in INFER|HOTDOG)
+  if [ "$renders_ok" -gt 0 ]; then
     sleep 10
     infer_ops="$(
       for u in "${udids[@]}"; do is_booted "$u" && sim_infer_rate "$u"; done |
       python3 -c 'import sys; print(round(sum(float(l) for l in sys.stdin if l.strip()), 2))'
     )"
+    for u in "${udids[@]}"; do
+      d="$(simctl get_app_container "$u" "$BUNDLE_ID" data 2>/dev/null || true)"
+      if [ -n "$d" ] && [ -f "$d/Documents/metrics.json" ]; then
+        printf '{"level":%s,"repeat":%s,"sim":"%s","metrics":%s}\n' \
+          "$n" "$rep" "$u" "$(cat "$d/Documents/metrics.json")" >> "$OUT_DIR/metrics-details.jsonl"
+      fi
+    done
   fi
+  ;; esac
 
   local metrics; metrics="$(sample_metrics)"
   record_row "$n" "$rep" "$boots_ok" "$installs_ok" "$launches_ok" "$renders_ok" "$boot_wall" "$failure" "$metrics" "$infer_ops"
@@ -348,6 +359,28 @@ record_row() {
   printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "$1" "$2" "$DEVICE" "$RUNTIME" "$PROFILE" "$3" "$4" "$5" "$6" "$7" "$metrics" "${10:-0}" "${8:-}" >> "$CSV"
 }
+
+# Nuclear cleanup. A simulator that FAILS to boot leaves orphaned processes
+# that `simctl shutdown`/`delete` do not reap — they accumulate across levels
+# until the per-user process table is exhausted, at which point fork() fails
+# for everything (including this script and the CI runner). Learned on EC2:
+# an IDLE ladder's failed N=24 boot left ~4,600 processes and 29 GB of swap
+# behind, silently poisoning the next ladder's measurements.
+hard_cleanup() {
+  [ "$DRY_RUN" -eq 0 ] || return 0
+  simctl shutdown all >/dev/null 2>&1
+  simctl delete unavailable >/dev/null 2>&1
+  # orphaned per-device processes, then the service that spawns them
+  # (CoreSimulatorService restarts on demand, so this is safe between levels)
+  pkill -9 -f 'CoreSimulator/Devices'        >/dev/null 2>&1
+  killall -9 launchd_sim                     >/dev/null 2>&1
+  killall -9 SimulatorTrampoline             >/dev/null 2>&1
+  killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1
+  sleep 3
+}
+
+# Processes right now (the wall that kills the observer as well as the test)
+proc_count() { ps -ax 2>/dev/null | wc -l | tr -d ' '; }
 
 teardown() {
   for u in "$@"; do
@@ -368,7 +401,40 @@ teardown() {
 # sweep
 # ---------------------------------------------------------------------------
 c_info "device=$DEVICE  levels=[$LEVELS]  repeats=$REPEATS"
+# Disk is a real wall: booted sims materialize ~0.5-1 GB each, and a full
+# disk kills the runner itself (learned on EC2: died ugly at N=16, results
+# unpublished). Below the floor, record 'disk' as the failure mode and stop
+# gracefully so the CSV and publish steps still happen.
+DISK_FLOOR_GB="${DISK_FLOOR_GB:-8}"
+# macOS default is ~2,500 procs/user; leave headroom for the runner itself
+PROC_CEILING="${PROC_CEILING:-2000}"
+BASELINE_PROCS="$( [ "$DRY_RUN" -eq 1 ] && echo 0 || proc_count )"
+c_info "baseline processes: $BASELINE_PROCS  (per-level ceiling $PROC_CEILING)"
 for n in $LEVELS; do
+  # Never start a level on a polluted box: leaked processes both corrupt the
+  # measurement and march the host toward a fork()-fails wedge.
+  if [ "$DRY_RUN" -eq 0 ]; then
+    procs="$(proc_count)"
+    if [ "$procs" -gt "$PROC_CEILING" ]; then
+      c_warn "$procs processes before N=$n (ceiling $PROC_CEILING) — hard cleanup"
+      hard_cleanup
+      procs="$(proc_count)"
+      if [ "$procs" -gt "$PROC_CEILING" ]; then
+        c_err "still $procs processes after cleanup — recording process wall at N=$n and stopping"
+        echo "$n,0,$DEVICE,$RUNTIME,$PROFILE,0,0,0,0,0,$(sample_metrics),0,process_wall" >> "$CSV"
+        break
+      fi
+      c_info "cleanup recovered to $procs processes"
+    fi
+  fi
+  if [ "$DRY_RUN" -eq 0 ]; then
+    free_gb="$(df -g / 2>/dev/null | awk 'NR==2{print $4}')"
+    if [ -n "$free_gb" ] && [ "$free_gb" -lt "$DISK_FLOOR_GB" ]; then
+      c_err "only ${free_gb}GB free (< ${DISK_FLOOR_GB}GB floor) — recording disk wall at N=$n and stopping"
+      echo "$n,0,$DEVICE,$RUNTIME,$PROFILE,0,0,0,0,0,$(sample_metrics),0,disk" >> "$CSV"
+      break
+    fi
+  fi
   level_clean=1
   for rep in $(seq 1 "$REPEATS"); do
     c_info "level N=$n  trial $rep/$REPEATS"
@@ -384,6 +450,9 @@ for n in $LEVELS; do
       c_warn "N=$n trial $rep degraded (renders=$renders/$n, mode='${fmode:-none}')"
     fi
   done
+  # reap anything the per-device teardown missed before the next level, so a
+  # failed high-N boot can't poison the levels that follow it
+  hard_cleanup
   if [ "$level_clean" -eq 0 ] && [ "$KEEP_GOING" -eq 0 ]; then
     c_warn "stopping: level N=$n was not clean and --stop-on-fail is set"
     break

@@ -24,6 +24,9 @@ on:
       ssh_cidr:
         description: 'CIDR allowed to SSH, e.g. 203.0.113.7/32 (provision only)'
         default: ''
+      az:
+        description: 'Pin one AZ (provision only); blank = hunt all AZs for capacity'
+        default: ''
 
 permissions:
   id-token: write   # mint the OIDC token
@@ -36,7 +39,9 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # generous: a fresh Mac Dedicated Host can sit 'pending' for a long while
+    # before it accepts launches, and provision.sh now waits for 'available'
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -60,10 +65,13 @@ jobs:
 
       - name: Restore host state (if any)
         run: |
+          # write via temp: '> aws/.state' would create an EMPTY file even when
+          # git show fails, which then masquerades as saved state downstream
           if git fetch origin aws-state 2>/dev/null; then
-            git show origin/aws-state:.state > aws/.state 2>/dev/null || true
+            git show origin/aws-state:.state > /tmp/aws-state 2>/dev/null || true
+            if [ -s /tmp/aws-state ]; then cp /tmp/aws-state aws/.state; fi
           fi
-          test -f aws/.state && cat aws/.state || echo "(no saved state)"
+          test -s aws/.state && cat aws/.state || echo "(no saved state)"
 
       - name: Status
         if: inputs.action == 'status'
@@ -93,6 +101,7 @@ jobs:
           KEY_NAME: ${{ inputs.key_name }}
           INSTANCE_TYPE: ${{ inputs.instance_type }}
           SSH_CIDR: ${{ inputs.ssh_cidr }}
+          AZ: ${{ inputs.az }}
           REGION: us-east-1
         run: |
           test -n "$SSH_CIDR" || { echo "ssh_cidr is required for provision (the runner's own IP is useless to you)"; exit 1; }
@@ -101,7 +110,7 @@ jobs:
       - name: Teardown
         if: inputs.action == 'teardown'
         run: |
-          test -f aws/.state || { echo "no saved state — nothing to tear down (check status)"; exit 1; }
+          test -s aws/.state || { echo "no saved state — nothing to tear down (check status)"; exit 1; }
           ./aws/teardown.sh
 
       - name: Save host state
@@ -111,7 +120,7 @@ jobs:
           git init -q -b aws-state
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          if [ -f "$GITHUB_WORKSPACE/aws/.state" ]; then
+          if [ -s "$GITHUB_WORKSPACE/aws/.state" ]; then
             cp "$GITHUB_WORKSPACE/aws/.state" .state
           else
             echo "released $(date -u +%FT%TZ)" > RELEASED.txt

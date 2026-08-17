@@ -1,0 +1,157 @@
+# Housekeeping for the self-hosted EC2 Mac runner, driven by dispatch so the
+# box never needs SSH. Born of the run-day disk-full incident: rescues any
+# unpublished results stranded in _work, reports what is eating the disk,
+# then cleans the known space hogs.
+name: EC2 maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to do'
+        type: choice
+        required: true
+        options: [report, clean, resize-disk, install-runner-daemon]
+
+jobs:
+  maintain:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 30
+    permissions:
+      contents: write   # rescue publishing to the ec2-results branch
+    steps:
+      # BEFORE checkout: checkout's git-clean would delete stranded untracked
+      # results from a previously crashed run in this same _work directory.
+      - name: Rescue stranded results (pre-checkout)
+        run: |
+          set -x
+          if [ -d "$GITHUB_WORKSPACE/results" ]; then
+            tar czf "$HOME/rescued-results.tgz" -C "$GITHUB_WORKSPACE" results
+            echo "rescued $(du -h "$HOME/rescued-results.tgz" | cut -f1)"
+          else
+            echo "nothing to rescue"
+          fi
+
+      - uses: actions/checkout@v4
+
+      # Daemon-started runners have a bare system PATH; brew lives elsewhere
+      - name: Put Homebrew on PATH
+        run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+
+      - name: Disk report (before)
+        run: |
+          df -h /
+          echo "== the usual suspects =="
+          du -sh /Applications/Xcode*.app 2>/dev/null || true
+          du -sh "$HOME"/Xcode*.xip 2>/dev/null || true
+          du -sh "$HOME/Library/Developer/CoreSimulator" 2>/dev/null || true
+          du -sh "$HOME/Library/Developer/CoreSimulator/Caches" 2>/dev/null || true
+          du -sh "$HOME/Library/Developer/CoreSimulator/Devices" 2>/dev/null || true
+          du -sh "$HOME/Library/Logs/CoreSimulator" 2>/dev/null || true
+          du -sh "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null || true
+          du -sh "$HOME/Library/Caches/Homebrew" 2>/dev/null || true
+          du -sh "$HOME/actions-runner/_work" 2>/dev/null || true
+          du -sh "$HOME/actions-runner/_diag" 2>/dev/null || true
+          xcrun simctl list devices 2>/dev/null | grep -c 'iPhone' || true
+
+      - name: Clean
+        if: inputs.action == 'clean'
+        run: |
+          set -x
+          rm -f "$HOME"/Xcode*.xip
+          xcrun simctl shutdown all 2>/dev/null || true
+          xcrun simctl delete all 2>/dev/null || true
+          rm -rf "$HOME/Library/Logs/CoreSimulator"/*
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"/*
+          # dyld caches under CoreSimulator/Caches are NOT removed: they cost
+          # GBs once but rebuilding them makes every subsequent boot crawl
+          brew cleanup -s 2>/dev/null || true
+          rm -rf "$HOME/Library/Caches/Homebrew"/* 2>/dev/null || true
+
+      # After the EBS volume is grown in the console (EC2 → Volumes → Modify),
+      # the APFS container must be told the disk got bigger. This is the
+      # AWS-documented procedure for EC2 Mac. Safe to re-run; no reboot needed.
+      - name: Resize APFS to fill the (grown) EBS volume
+        if: inputs.action == 'resize-disk'
+        run: |
+          set -x
+          diskutil list physical external
+          PDISK=$(diskutil list physical external | head -n1 | cut -d' ' -f1)
+          APFSCONT=$(diskutil list physical external | grep Apple_APFS | tr -s ' ' | cut -d' ' -f8)
+          # EBS size changes can take minutes to reach the instance; poll until
+          # the kernel sees a disk larger than the APFS container (or give up)
+          ok=0
+          for i in $(seq 1 20); do
+            yes | sudo diskutil repairDisk "$PDISK" || true
+            if sudo diskutil apfs resizeContainer "$APFSCONT" 0; then
+              ok=1; break
+            fi
+            echo "container already fills the disk the kernel can see — waiting for EBS grow to propagate ($i/20)"
+            sleep 30
+          done
+          diskutil list physical external
+          df -h /
+          [ "$ok" -eq 1 ] || { echo "::error::kernel never saw a larger disk — on EC2 Mac a REBOOT is usually required after growing the EBS volume"; exit 1; }
+
+      # The runner currently lives in a nohup'd process that dies on reboot,
+      # and svc.sh LaunchAgents need a GUI login this headless box lacks. A
+      # system LaunchDaemon running as ec2-user survives reboots. Written but
+      # NOT started now (a second live runner would collide with the one
+      # executing this job) — it activates at next boot via RunAtLoad.
+      - name: Install boot-persistent runner daemon
+        if: inputs.action == 'install-runner-daemon'
+        run: |
+          sudo tee /Library/LaunchDaemons/com.simdensity.runner.plist >/dev/null <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>Label</key><string>com.simdensity.runner</string>
+            <key>UserName</key><string>ec2-user</string>
+            <key>WorkingDirectory</key><string>/Users/ec2-user/actions-runner</string>
+            <key>ProgramArguments</key>
+            <array>
+              <string>/Users/ec2-user/actions-runner/run.sh</string>
+            </array>
+            <key>RunAtLoad</key><true/>
+            <key>KeepAlive</key><true/>
+            <key>ThrottleInterval</key><integer>30</integer>
+            <key>StandardOutPath</key><string>/Users/ec2-user/runner-daemon.log</string>
+            <key>StandardErrorPath</key><string>/Users/ec2-user/runner-daemon.log</string>
+          </dict>
+          </plist>
+          PLIST
+          sudo chown root:wheel /Library/LaunchDaemons/com.simdensity.runner.plist
+          sudo chmod 644 /Library/LaunchDaemons/com.simdensity.runner.plist
+          plutil -lint /Library/LaunchDaemons/com.simdensity.runner.plist
+          echo "daemon installed — activates at next boot (RunAtLoad)"
+
+      - name: Publish rescued results to ec2-results branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          test -f "$HOME/rescued-results.tgz" || { echo "no rescue payload"; exit 0; }
+          d=$(mktemp -d) && cd "$d"
+          git init -q -b ec2-results
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q "$url" ec2-results 2>/dev/null; then
+            git checkout -q FETCH_HEAD
+            git checkout -q -b keep && git branch -q -M ec2-results
+          fi
+          dest="runs/rescue-$(date -u +%Y%m%dT%H%M%SZ)"
+          mkdir -p "$dest"
+          tar xzf "$HOME/rescued-results.tgz" -C "$dest"
+          rm -rf "$dest"/results/*/screens 2>/dev/null || true
+          echo "rescued by maintenance run ${GITHUB_RUN_NUMBER} · $(date -u +%FT%TZ)" > "$dest/RUN.txt"
+          git add -A
+          git commit -qm "Rescued stranded results (maintenance run ${GITHUB_RUN_NUMBER})"
+          git push -q "$url" ec2-results
+          rm -f "$HOME/rescued-results.tgz"
+
+      - name: Disk report (after)
+        if: always()
+        run: df -h /

@@ -61,29 +61,62 @@ make the demo mirror that use case, still without AWS spend:
 - ✅ OIDC role for GitHub Actions + manual-dispatch host workflow
   (`aws-provision.yml`): status / provision / teardown, no stored secrets
 
-## Phase 3 — AWS provisioning (the 24h clock)
+## Phase 3 — AWS provisioning (the 24h clock) ✅
 
 - ✅ `aws/provision.sh` / `aws/teardown.sh` / runbook (SSM-resolved AMI,
   auto AZ, SSH scoped to caller IP, 24h-aware teardown)
 - ✅ Mac Dedicated Host quota approved: 1× `mac2-m2pro` (12 cores / 32 GB),
   us-east-1 — see `aws/RUNDAY.md` for the 24-hour run plan
-- ⬜ Billing budget + release-at-24h reminder
-- ⬜ Host allocated, instance up, SSH verified
+- ✅ Release-at-24h reminders armed (T+22h ≈ 10:50Z, T+24h ≈ 12:50Z Aug 16)
+- ✅ Host allocated (h-08263dbbdfa1ed7a5, us-east-1d, ~12:50Z Aug 15 after a
+  10-attempt overnight capacity hunt), instance up (i-015e87b4be6932c2c);
+  two launch bugs found & fixed on the way: run-instances tenancy belongs
+  inside `--placement`, and a pending host must be waited to `available`
+- ⬜ SSH verified from the user's machine
 
 ## Phase 4 — CI on the paid box
 
-- ✅ Dispatch workflow `sweep.yml` (N / repeats / device inputs, artifacts)
-- ⬜ Self-hosted Actions runner registered on the EC2 Mac
+- ✅ Dispatch workflow `sweep.yml` — upgraded to drive the whole run day
+  remotely: mode (sweep/shard), profile, boot timeout; results published
+  append-only to the `ec2-results` branch
+- ✅ Self-hosted Actions runner registered on the EC2 Mac; made
+  boot-persistent via a system LaunchDaemon (svc.sh can't work headless;
+  daemon PATH quirk fixed in workflows)
+- ✅ `ec2-maintenance.yml`: dispatchable disk report/cleanup, stranded-
+  results rescue, APFS resize — the box needs no SSH to operate
 
-## Phase 5 — The experiment
+## Phase 5 — The experiment ✅
 
-- ⬜ Full N-sweep to failure with repeats; failure mode logged at the ceiling
-- ⬜ Process/fd limit tuning if that wall arrives before RAM
+- ✅ IDLE ladder to failure: working point 16, hard ceiling 24
+  (`launchd_sim` cannot bind a session), ~1,115 MB and ~260 processes
+  per simulator
+- ✅ INFER (edge-AI) ladder N=1–12, zero failures: 45.6 → 523.9 inf/s,
+  per-simulator efficiency peaks at N=6, knee coincides with swap onset
+- ✅ Shard speedup: 1.65× at 2 shards, 0.70× at 4 — the crossover is set
+  by suite-time vs per-simulator startup cost, not core count
+- ✅ Process wall characterized and guarded (`hard_cleanup`,
+  `PROC_CEILING`); disk wall guarded (`DISK_FLOOR_GB`)
+- ⬜ ANIMATE ladder — attempted, contaminated by the process leak it
+  revealed; reported as a finding rather than density data
 
 ## Phase 6 — The answer
 
 - ✅ Report generator (`analyze.py --report`)
-- ⬜ Final `report.md` committed: the number, the knee, what broke first
+- ✅ White paper (`docs/PAPER.md`) — complete: abstract, method,
+  free-tier findings, operations study, results, economics, conclusion
+- ✅ Six-page exec/eng brief (`docs/BRIEF.md`) — complete, incl. the
+  costed traps table and the competitive analysis
+- ✅ Dashboard snapshots per ladder in `docs/snapshots/` (01-idle,
+  03-infer, 04-shard, 05-final)
+
+## Phase 6.5 — Publication polish (repo is referenced by the docs)
+
+- ✅ README rewritten as the repo's front door: measured answer up top,
+  links to BRIEF/PAPER/snapshots/data branches
+- ✅ RUNDAY corrected with measured reality and the six run-day lessons
+- ✅ Sanity sweep: no credentials, IPs, or account ids in tracked files;
+  `make dryrun` runs the whole harness on any OS
+- 🔄 PR #7 covers the full body of work — awaiting merge to main
 
 ## Phase 7 — Optional extras
 

@@ -1,22 +1,71 @@
 # Run day — 24 hours on a mac2-m2pro.metal (M2 Pro · 12 cores · 32 GB)
 
+> ## Lessons from the actual run day (2026-08-15/16) — read BEFORE allocating
+>
+> Each of these cost us real clock on a billing host. Budget for them:
+>
+> 1. **Capacity is a lottery.** Quota approval ≠ a Mac existing. 10
+>    hourly AZ-hunting attempts (~6h) before allocation succeeded.
+> 2. **A fresh host sits `pending` ~50+ min** before it accepts launches —
+>    and AWS reports a launch onto a pending host as `InvalidHostId: does
+>    not exist`. provision.sh now waits automatically.
+> 3. **The AMI has NO Xcode** (Apple licensing). Budget ~1–1.5h: browser
+>    login to developer.apple.com on a trusted machine → DevTools "Copy as
+>    cURL" on the .xip download → run that curl on the Mac → `xip --expand`
+>    (~20 min, silent) → `sudo xcodebuild -runFirstLaunch` →
+>    `xcodebuild -downloadPlatform iOS`. The `xcodes` brew formula
+>    compiles from source (needs Xcode — circular) and its CLI auth is
+>    flaky; use the prebuilt release binary or the cURL trick.
+> 4. **Disk is a real wall.** Booted sims materialize ~0.5–1+ GB each;
+>    the default 100 GB volume died at N=16 and took the runner with it.
+>    Grow the EBS volume in the console (400 GB ≈ $1/day) — and note the
+>    grow is **invisible to macOS until you REBOOT the instance** (reboot
+>    is safe; STOP is not — stop triggers host scrubbing). Then run the
+>    `resize-disk` action of `ec2-maintenance.yml`. sweep.sh now stops
+>    gracefully at a disk floor (`DISK_FLOOR_GB`, default 8).
+> 5. **Run the Actions runner as a LaunchDaemon** (`install-runner-daemon`
+>    action), not `svc.sh` (LaunchAgents need a GUI login that headless
+>    boxes lack) and not nohup (dies on reboot). Daemon PATH is bare —
+>    workflows must add `/opt/homebrew/bin` to `GITHUB_PATH` (done).
+> 6. **Lost .pem = no re-download.** Recovery: attach an SSM role to the
+>    running instance → Session Manager shell (~30 min for the agent to
+>    see credentials) → `sudo ssh-keygen -A` if sshd host keys are missing
+>    → add a new authorized key. Never stop the instance for access.
+
 The clock starts at allocation and cannot stop for 24 hours, so the day is a
 schedule, not a vibe. Everything below is copy-paste; timeboxes are loose but
 the ordering matters (cheap validation first, expensive sweeps once trusted,
 teardown armed before you sleep).
 
-Predicted ceilings for this box (from the hosted-runner RAM fits — the whole
-point of today is to check them):
+### Predictions vs what actually happened (2026-08-15/16)
 
-| profile | MB/sim (measured) | predicted ceiling (32 GB, 85% usable) |
-|---|---|---|
-| IDLE    | ~267  | ~90 sims |
-| ANIMATE | ~356  | ~63 sims |
-| INFER   | ~1080 | ~22 sims |
+The hosted-runner fits predicted this box would hold ~90 IDLE sims. **It
+held 16.** Keep the original numbers visible — being wrong in public is
+the point of the exercise:
 
-Watch for the other walls arriving first: 12 CPU cores, and the ~2,500
-process-per-user limit (each sim spawns 15–25 processes, so expect trouble
-past ~N=80 on IDLE).
+| profile | hosted-runner fit | predicted ceiling | **measured on this box** |
+|---|---|---|---|
+| IDLE    | ~267 MB/sim  | ~90 sims | **~1,115 MB/sim → 16 clean, 24 won't boot** |
+| ANIMATE | ~356 MB/sim  | ~63 sims | contaminated run (see below) |
+| INFER   | ~1,080 MB/sim | ~22 sims | `[pending]` |
+
+Why the miss: at N≤3 on a 7 GB runner, simulators share warm OS caches and
+never carry a full working set. Extrapolating from that regime is honest
+math on an insufficient range — **free-tier calibration validates the
+harness, not the hardware.**
+
+Both walls arrive together here, not sequentially: at N=16 the box is 15 GB
+into swap *and* running ~4,200 processes (≈260/sim, not the 15–25 the docs
+suggest), with 315 s boot walls. At N=24 `launchd_sim` cannot bind a session
+at all.
+
+**The wall takes the harness with it.** A failed boot leaks simulator
+processes that `simctl shutdown`/`delete` do not reap; they accumulate until
+`fork()` fails for *everything* — the sweep, the CI runner, and any recovery
+job you dispatch afterwards. The box then accepts work and executes nothing,
+recoverable only by a console **Reboot** (never Stop). sweep.sh now hard-
+cleans after every level and refuses to start one above `PROC_CEILING`; if
+you see `failure_mode=process_wall` in a CSV, that guard just saved a host.
 
 ## T+0:00 — allocate (the clock starts)
 

@@ -2,15 +2,52 @@
 
 **How many iOS simulators can one Mac run at once?** This repo answers that
 empirically. It boots simulators in increasing waves (N = 1, 2, 4, 8, …),
-launches a trivial app in each, verifies each one actually rendered, samples
-host resources, and records where things break. The output is a number with a
-graph behind it: the **reliable working point** and the **hard ceiling**.
+launches a real SwiftUI app in each, verifies each one actually *rendered*,
+samples host resources every second, and records exactly where things break.
 
-The eventual target is an [AWS EC2 Mac](aws/README.md) dedicated host driven by
-CI — but everything here runs on any Mac with Xcode, so the whole harness is
-proven for free before a paid host is ever allocated.
+## The answer, measured
 
-> Full plan and rationale: **[roadmap](https://claude.ai/code/artifact/0b6a9ca5-7e9c-4e41-8b3f-ffa19ad5ad4d)** (phases 0–6).
+On an **AWS `mac2-m2pro.metal`** (M2 Pro · 12 cores · 32 GB) running
+**iOS 26.5** simulators:
+
+| | |
+|---|---|
+| **Reliable working point (IDLE)** | **~16 simulators** |
+| **Hard ceiling** | **24 — `launchd_sim` cannot bind a session** |
+| **Memory per simulator** | **~1,115 MB** over an 11.8 GB base |
+| **At the working point** | 15 GB into swap, ~4,200 processes, 315 s boot wall |
+
+**The prediction from free hosted runners said ~90 simulators. The real
+box held 16.** That 4× miss is the most useful result here: at N ≤ 3 on a
+small runner, simulators share warm OS caches and never carry a full
+working set, so extrapolating from that regime is honest math on an
+insufficient range. **Free-tier calibration validates your harness, not
+your hardware.**
+
+📄 **[Six-page brief](docs/BRIEF.md)** (leadership + engineering) ·
+📄 **[White paper](docs/PAPER.md)** (full method and findings) ·
+📊 **[Dashboard snapshots](docs/snapshots/)** (per-ladder, self-contained
+HTML) · 🗺️ **[Roadmap](ROADMAP.md)**
+
+Raw data lives on orphan branches, append-only:
+[`ec2-results`](../../tree/ec2-results) (paid box),
+[`ci-results`](../../tree/ci-results) (hosted runners).
+
+## What makes this more than a benchmark
+
+- **Booted ≠ working.** Every simulator must render a verified frame
+  (screenshot byte-size check), not merely report `Booted`.
+- **Load profiles.** Density is measured under `IDLE`, `ANIMATE`,
+  `SCROLL`, and `INFER` — the last running **real on-device neural
+  inference** (Vision OCR; the model ships with the OS, nothing bundled),
+  because AI-feature test suites have very different capacity needs.
+- **Verify before you pay.** Three tiers — mocks (any OS) → free hosted
+  macOS runners → one paid 24-hour host. Seven real bugs were caught for
+  $0 before the meter ever started.
+- **The operations study.** Getting the Mac was harder than measuring it:
+  a capacity lottery, an AMI with no Xcode, a disk wall, and a process
+  wall that takes the CI runner down with it. All of it is documented and
+  guarded in [`aws/RUNDAY.md`](aws/RUNDAY.md) and the scripts here.
 
 ---
 
