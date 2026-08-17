@@ -472,11 +472,101 @@ to win. They would only need to remove the day we spent getting here.
 
 ## Appendix A — Run-day timeline
 
-*(Annotated wall-clock log of the 24h window: allocation 12:50Z Aug 15,
-pending-wait, launch, SSM recovery, Xcode install, smoke, ladders,
-teardown. Source material for Section 5's cost accounting.)*
+Wall-clock log of the paid window. Times UTC. This is the source data
+for the setup-tax accounting in Section 5.
+
+| Time | Elapsed | Event |
+|---|---|---|
+| Aug 15 06:52 | −6:00 | Capacity hunt begins — automated hourly `allocate-hosts` attempts across all AZs offering the type |
+| Aug 15 12:50 | **T+0** | **Host allocated** (`h-08263dbbdfa1ed7a5`, us-east-1d) on attempt 10. The 24-hour clock starts |
+| Aug 15 12:50 | T+0:00 | First launch attempt fails: `--tenancy` is not a valid top-level `run-instances` flag |
+| Aug 15 13:40 | T+0:50 | Second launch fails: `InvalidHostId: does not exist` — the host is still `pending`, ~50 min after allocation |
+| Aug 15 14:15 | T+1:25 | **Instance running** (`i-015e87b4be6932c2c`) after adding a wait-for-`available` loop |
+| Aug 15 ~15:00 | T+2:10 | SSH impossible — key pair `.pem` unavailable and not re-issuable. Recovery: attach SSM role, wait for agent credential refresh |
+| Aug 15 ~19:00 | T+6:10 | Session Manager shell obtained; AMI shipped with no sshd host keys (`ssh-keygen -A`) |
+| Aug 15 ~19:30 | T+6:40 | **No Xcode on the AMI.** `xcodes` via Homebrew fails (compiles from source, needs Xcode); its CLI login rejects valid credentials |
+| Aug 15 ~21:00 | T+8:10 | Xcode installed via authenticated browser download copied as cURL; `xip --expand`, first-launch, iOS platform download |
+| Aug 15 21:07 | T+8:17 | **`make smoke` clean** — first real simulators on the box |
+| Aug 15 21:23 | T+8:33 | Self-hosted runner registered and listening |
+| Aug 15 21:25 | T+8:35 | IDLE ladder dispatched |
+| Aug 15 22:13 | T+9:23 | Ladder dies at N=16: **disk full**. ENOSPC kills the runner; results stranded |
+| Aug 15 23:02 | T+10:12 | Cleanup + rescue of stranded results; disk-floor guard added to harness |
+| Aug 16 00:16 | T+11:26 | EBS volume grown to 400 GB — **invisible until instance reboot**; LaunchDaemon installed so the runner survives it |
+| Aug 16 01:09 | T+12:19 | **IDLE ladder relaunched clean** — first usable density data ≈ half the paid window after allocation |
+| Aug 16 03:28 | T+14:38 | IDLE complete: working point 16, ceiling 24. Snapshot published |
+| Aug 16 04:01 | T+15:11 | ANIMATE ladder starts — on a host still holding ~4,600 leaked processes |
+| Aug 16 06:24 | T+17:34 | **Process wall.** `fork()` fails for everything; box accepts jobs, executes nothing |
+| Aug 16 06:24–19:05 | T+17:34–30:15 | **~13 hours billed idle** awaiting a console reboot (the only recovery) |
+| Aug 16 19:12 | T+30:22 | Box recovered; ANIMATE data rescued; process-leak guard added |
+| Aug 16 19:14 | T+30:24 | INFER ladder starts |
+| Aug 17 00:23 | T+35:33 | **INFER complete, zero failures**, N=1–12 |
+| Aug 17 00:24 | T+35:34 | Shard ladder starts |
+| Aug 17 01:20 | T+36:30 | **Shard complete**, all shards passing |
+| Aug 17 01:24 | **T+36:34** | **Instance terminated, host released.** Billing ends |
+
+**Summary:** 36.5 host-hours. ~12.3 hours from allocation to first usable
+data (setup tax), ~13 hours lost to the process-wall wedge, ~6 hours of
+productive measurement, remainder in failed/contaminated ladders and
+recovery. Every one of the delays above is now either automated away or
+documented in `aws/RUNDAY.md`.
 
 ## Appendix B — Harness reference
 
-*(CSV schemas, profile definitions, mock fault-injection knobs, workflow
-inputs. Mostly exists in README/RUNDAY — link, don't duplicate.)*
+**`results.csv`** — one row per (N, trial):
+
+```
+level,repeat,device,runtime,profile,boots_ok,installs_ok,launches_ok,
+renders_ok,boot_wall_ms,mem_used_mb,mem_total_mb,load1,proc_count,
+swap_used_mb,infer_ops,failure_mode
+```
+
+`renders_ok` is the column that matters — `boots_ok` counts simulators
+that reported Booted, `renders_ok` counts those that produced a verified
+frame. `failure_mode` is empty on a clean trial, else one of
+`partial_render`, `boot_timeout`, `install`, `disk`, `process_wall`.
+`infer_ops` is aggregate inferences/sec across all simulators (INFER and
+HOTDOG profiles only).
+
+**`timeline.csv`** — one row per sample interval (default 5 s):
+
+```
+ts_ms,level,repeat,mem_used_mb,mem_total_mb,load1,proc_count,
+swap_used_mb,booted
+```
+
+**`speedup.csv`** (shard runs) — one row per shard count:
+
+```
+shards,total_tests,wall_ms,passed_shards,failed_shards
+```
+
+**Load profiles** (`--profile`, forwarded to the app as `SD_PROFILE`):
+
+| Profile | Behavior |
+|---|---|
+| `IDLE` | static screen — the platform floor |
+| `ANIMATE` | continuous animation plus periodic hash churn |
+| `SCROLL` | auto-scrolling list — memory and render churn |
+| `INFER` | Vision OCR loop on generated images; reports inferences/sec |
+| `HOTDOG` | Vision image classification scored against ground truth (see the Section 5 sidebar — not usable in headless simulators) |
+
+**Mock fault injection** (`--dry-run`, runs on any OS):
+
+| Variable | Effect |
+|---|---|
+| `MOCK_BOOT_SECS` | seconds a simulated boot takes |
+| `MOCK_MAX_SIMS` | `create` fails beyond this many live simulators |
+| `MOCK_BOOT_HANG_AT` | simulators booted beyond this count never finish |
+| `MOCK_RENDER_FAIL_AT` | simulators beyond this ordinal boot but render blank |
+| `MOCK_SECS_PER_TEST` | per-test duration for shard timing |
+
+**Guards** (environment overrides): `DISK_FLOOR_GB` (default 8) stops a
+sweep before ENOSPC; `PROC_CEILING` (default 2000) forces a hard cleanup
+and refuses a level the host cannot support.
+
+**Workflow inputs** — `sweep.yml` takes `mode` (sweep/shard), `profile`,
+`levels`, `repeats`, `device`, `boot_timeout`; `aws-provision.yml` takes
+`action` (status/provision/teardown) plus instance type, key name, SSH
+CIDR and optional AZ pin; `ec2-maintenance.yml` takes `action` (report /
+clean / resize-disk / install-runner-daemon). Full usage:
+[`README.md`](../README.md) and [`aws/RUNDAY.md`](../aws/RUNDAY.md).
