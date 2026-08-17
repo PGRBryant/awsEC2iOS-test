@@ -2,47 +2,92 @@
 
 **A six-page brief for engineering and business leadership**
 
-> **Status: DRAFT SKELETON.** `[EC2-PENDING]` marks slots for the 24-hour
-> run's numbers. Written to stand alone: a VP reads pages 1–2 and the
-> tables; an engineer reads all six and follows the repo links. The long
-> companion piece is `docs/PAPER.md`; the raw data and code are this repo.
+> Every number here is measured, not modelled — on one AWS EC2 Mac over a
+> 36-hour window in August 2026. Written to stand alone: leadership reads
+> pages 1–2 and the tables; engineers read all six and follow the repo
+> links. Long companion: `docs/PAPER.md`. Data and code: this repo.
 
 ---
 
 ## Page 1 — The answer up front
 
-*(One page, no jargon. Boxed headline numbers.)*
+**The question.** iOS simulators are the workhorse of mobile CI: every
+pull request runs its tests inside them, and how many you can run at
+once sets how fast a phone team gets feedback. Nobody publishes how many
+a cloud Mac actually holds. We measured it.
 
-- **The question:** how many iOS simulators — the workhorse of mobile CI —
-  can one cloud Mac actually run, and what does that mean for how fast a
-  mobile team can test?
-- **The headline:** `[EC2-PENDING]` N reliable simulators (IDLE) on a
-  mid-tier cloud Mac (12 cores / 32 GB); N under realistic app load; N
-  when tests exercise on-device AI. Test-suite wall-time improves X× with
-  N-way sharding.
-- **The catch:** getting and preparing the hardware took ~9 hours of a
-  24-hour minimum-billing window. The bottleneck of cloud Mac testing is
-  not the Mac — it's the acquisition pipeline.
-- **The market gap in one sentence:** AWS is the only hyperscaler that
-  rents Mac hardware at all, and even there capacity is scarce,
-  provisioning is manual-ish, and images ship without developer tooling —
-  the door is open for a competitor (Section: The GCP-shaped hole).
+**The answer, on an AWS `mac2-m2pro.metal` (M2 Pro · 12 cores · 32 GB)
+running iOS 26.5:**
+
+> ### ~16 simulators reliably. 24 refuses to start.
+> **~1,115 MB of memory and ~260 processes per simulator.** At sixteen,
+> the machine is 15 GB into swap with five-minute boot waits. At
+> twenty-four, `launchd_sim` cannot start at all.
+
+**Three findings a mobile organization can act on Monday:**
+
+1. **Free-tier estimates are off by 4×.** Measurements from free
+   GitHub-hosted runners predicted ~90 simulators on this machine. It
+   held 16. Small runners never reach the regime where each simulator
+   carries its own working set. *If your capacity plan came from a
+   small runner, it is wrong — and wrong in the expensive direction.*
+2. **AI-feature testing costs ~2× the capacity of ordinary testing.**
+   Simulators running real on-device inference need ~1.5 GB each, and
+   throughput per simulator peaks at **six** on this box. Plan AI test
+   fleets on inference numbers and size for memory, not cores.
+3. **More parallelism is not more speed.** Splitting a test suite across
+   2 simulators made it **1.65× faster**; across 4 it became **slower
+   than not splitting at all**. The limit is per-simulator startup cost,
+   not core count — twelve cores bought two-way parallelism.
+
+**The catch, and the opportunity.** Getting the machine took longer than
+using it: roughly **half of the first paid 24-hour window** went to
+acquiring and preparing hardware — a capacity lottery with no queue, an
+image with no Xcode, and failure modes that report the wrong problem
+(page 5). AWS is the only hyperscaler renting Apple silicon at all, and
+this is what its state of the art costs in engineer-hours. A competitor
+that sold *ready parallel simulators* rather than *machines you prepare
+yourself* would not need better hardware to win (page 6).
 
 ## Page 2 — Why this matters (the business case)
 
-- Mobile PR feedback latency = developer velocity. Sharding a test suite
-  across simulators is the lever; simulator density is the fulcrum.
-- The economics table: $/parallel-simulator-hour across the options a team
-  actually has today — GitHub-hosted runners, EC2 Mac (measured today),
-  managed vendors (CircleCI/Bitrise/MacStadium list prices).
-  `[EC2-PENDING for our column]`
-- The edge-AI wrinkle: suites that test on-device inference (increasingly
-  standard) cut density ~4× — capacity planning done on idle numbers will
-  be wrong by that factor. We measured it: ~267 MB/sim idle vs ~1080
-  MB/sim under real Vision-framework OCR load.
-- The 24h-minimum constraint turns "spin up a Mac for an hour" into a
-  scheduling discipline: batch density needs into windows. *(Chart:
-  cost-per-useful-hour vs setup overhead.)*
+**Developer velocity is bought with simulator density.** Mobile teams
+ship at the speed their pull requests get feedback. Test suites are
+parallelized across simulators; simulators are constrained by Mac
+hardware — the scarcest, oddest resource in CI, and the only one a
+hyperscaler still rents by the day rather than the minute.
+
+**The three options a team actually has, with what we measured:**
+
+| | Hosted runners (GitHub) | Dedicated cloud Mac (measured) | Managed Mac cloud |
+|---|---|---|---|
+| Parallel simulators | ~3 (7 GB cap) | **~16 idle / ~6–12 under AI load** | vendor-defined |
+| Purchase unit | per-minute, free for OSS | **24-hour minimum** | per-minute |
+| Timing stability | varies >2× run to run | stable | stable |
+| Setup burden | none | **~half of our first paid day** | none |
+| Best for | correctness signals, small suites | sustained high-volume density | most teams, most of the time |
+
+**Three consequences for planning:**
+
+1. **Batch your density work.** With a 24-hour minimum and a real setup
+   tax, a dedicated host only makes sense when a full day of parallel
+   testing is queued behind it. Below that, per-minute vendors win even
+   after their margin — the arithmetic isn't close.
+2. **Budget AI test capacity separately.** Suites exercising on-device
+   inference need ~1.5 GB per simulator versus ~1.1 GB idle, and their
+   efficiency peaks at six simulators, not sixteen. A fleet sized on
+   idle numbers will over-commit AI suites by 2–3× and spend the
+   difference in swap.
+3. **Measure your own startup cost before buying parallelism.** Our
+   suite stopped benefiting from sharding at two simulators because
+   boot+install (40–90 s) dominated a 150-second suite. Longer suites
+   shard further; the ratio, not the core count, decides. Teams that
+   over-shard pay for hardware to make their tests *slower*.
+
+**The strategic read.** Every number above says the same thing: the
+constraint in cloud iOS testing is not silicon, it is packaging. The
+hardware can do the work; the purchase model, the images, and the
+operational surface are what make it expensive (pages 5–6).
 
 ## Page 3 — What we measured and how
 
@@ -83,22 +128,54 @@ fit. The machine held **16**, at **1,115 MB/sim**. The free tier was not
 wrong about the harness; it was wrong about the hardware, because at
 N ≤ 3 on a 7 GB runner simulators share warm OS caches and never carry a
 full working set. **Cheap tiers prove your pipeline. Only the target
-hardware sizes your fleet.** `[EC2-PENDING: INFER + shard rows]`
+hardware sizes your fleet.** The same pattern held elsewhere: the free
+tier could not reach the edge-AI knee (it ran out of memory at N=3, three
+simulators short of the peak) and it got the sharding answer backwards —
+0.15× where the real machine delivers 1.65×.
 
-## Page 4 — Results (the four charts)
+## Page 4 — Results
 
-*(One chart each, pulled from the dashboard snapshots; two sentences of
-takeaway per chart.)*
+*Charts: `docs/snapshots/01-idle.html`, `03-infer.html`, `04-shard.html`
+— each self-contained, with the underlying table included.*
 
-1. **Density ladder (IDLE):** render success vs N; working point and hard
-   ceiling; what broke first. `[EC2-PENDING]`
-2. **Density under load (ANIMATE):** the realistic number. `[EC2-PENDING]`
-3. **The edge-AI curve (INFER):** aggregate inferences/sec vs N — where
-   12 cores plateau. On 3 free cores it was still linear at N=3 (30→46→88
-   inf/s). `[EC2-PENDING]`
-4. **Shard speedup:** suite wall-time vs shard count vs ideal; on 3 cores
-   sharding was a 0.15× *slowdown* — cores buy sharding. Where's the
-   crossover on 12? `[EC2-PENDING]`
+**1 · Density ladder (IDLE) — the ceiling.** N = 1–16 render perfectly;
+N = 24 will not boot. Memory grows at ~1,115 MB per simulator over an
+11.8 GB base, processes at ~260 per simulator. At the working point the
+machine is already 15 GB into swap with 315-second boot waits — it is
+working, but the next step is a refusal, not a slowdown.
+
+| N | 1 | 2 | 4 | 8 | 16 | 24 |
+|---|---|---|---|---|---|---|
+| renders | 100% | 100% | 100% | 100% | 100% | **fails to boot** |
+| memory | 9.4 GB | 13.9 GB | 19.0 GB | 25.7 GB | 27.3 GB | — |
+| swap | 0 | 0 | 0 | ~0 | 15 GB | — |
+
+**2 · The prediction scorecard — the free tier missed by 4×.** Hosted
+runners fit 267 MB/simulator and predicted ~90 on this machine.
+Measured: 1,115 MB and 16. Not a modelling error but a sampling one —
+three simulators on a 7 GB box never enter the regime that binds.
+
+**3 · Edge-AI curve (INFER) — density is superlinear before it is
+sublinear.** Aggregate on-device inference rises 45.6 → 523.9 inf/s from
+N=1 to N=12 (11.5×), but *per-simulator* throughput peaks at **N=6**
+(55.2/sim — 21% better than a lone simulator, because one simulator
+cannot saturate the machine). Past N=6 the marginal return halves,
+exactly where swap begins. It never plateaued: edge-AI density here is
+bound by memory, not by the 12 cores.
+
+**4 · Shard speedup — parallelism stops paying at 2.** The same 12-test
+suite split N ways, every shard passing:
+
+| shards | 1 | **2** | 4 | 6 | 8 |
+|---|---|---|---|---|---|
+| wall time | 149 s | **90 s** | 213 s | 370 s | 685 s |
+| speedup | 1.00× | **1.65×** | 0.70× | 0.40× | 0.22× |
+
+On three free cores this was a 0.15× *slowdown*; twelve real cores make
+2-way sharding a genuine 1.65× win — and 4-way slower than not sharding
+at all. Each shard pays 40–90 s of simulator startup before running a
+test, so sharding pays only while `suite_time / n` exceeds that cost.
+**Twelve cores bought two-way parallelism, not twelve-way.**
 
 ## Page 5 — The operations reality (what it took to get here)
 
@@ -139,9 +216,11 @@ into the token's `sub` claim, so the textbook trust policy never matches.)
 ## Page 6 — What's possible today, and the GCP-shaped hole
 
 **What we just proved possible today** (with AWS + GitHub, list prices):
-- `[EC2-PENDING]` parallel simulators / $X.XX per hour / suite speedup X×
-  — but behind a quota request, a capacity lottery, a 24h minimum, and
-  ~Xh of setup tax.
+- **~16 parallel simulators** on a 32 GB machine (~6–12 under edge-AI
+  load), **1.65×** suite speedup from 2-way sharding, **523 inferences/s**
+  aggregate at N=12 — all of it behind a quota request, a capacity
+  lottery, a 24-hour minimum, and a setup tax that consumed roughly half
+  the first paid day.
 
 **What today's offerings actually are:**
 - AWS EC2 Mac: real Apple silicon metal, Dedicated Host only, 24h

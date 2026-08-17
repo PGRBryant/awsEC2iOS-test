@@ -2,9 +2,10 @@
 
 **A density, economics, and operations study of iOS simulator CI on AWS EC2 Mac**
 
-> **Status: DRAFT SKELETON.** Sections marked `[EC2-PENDING]` await the
-> 24-hour run on the mac2-m2pro.metal box. Everything else can be written
-> from data already collected. One author pass at the end for voice.
+> All results below are measured on real hardware: one AWS
+> `mac2-m2pro.metal` Dedicated Host, allocated 2026-08-15 12:50 UTC and
+> released 2026-08-17 01:24 UTC. Raw data: the `ec2-results` branch of
+> this repository. Companion executive brief: `docs/BRIEF.md`.
 
 ---
 
@@ -74,7 +75,7 @@ tier would have charged for:
 |---|---|---|---|
 | 0 | Mock `simctl`/`xcodebuild` with fault injection | $0 | pipefail boot-detection bug; harness logic |
 | 1 | GitHub-hosted macOS runners | $0 | 7 real bugs (Section 5.3); RAM models; device/runtime pairing |
-| 2 | EC2 mac2-m2pro.metal, one 24h window | ~$[COST] | the actual answer `[EC2-PENDING]` |
+| 2 | EC2 mac2-m2pro.metal, ~36 h (24 h minimum + extension) | on-demand host rate | the density answer, plus four platform walls free tiers cannot reach |
 
 ### 3.1 The harness
 
@@ -228,8 +229,12 @@ fix → time/money cost.
   dies on reboot. A system LaunchDaemon (RunAtLoad + KeepAlive) is the
   working answer — with the trap that daemons get a bare system PATH,
   silently hiding every Homebrew tool from workflows.
-- **Total overhead accounting**: `[EC2-PENDING]` wall-clock from
-  allocation to first data row; the honest "setup tax" on a 24h window.
+- **Total overhead accounting**: host allocated 2026-08-15 12:50 UTC;
+  first usable data row ~2026-08-16 00:30 UTC. **Roughly half the first
+  paid 24-hour window went to acquisition and preparation**, before a
+  single density measurement existed. A further ~13 hours were lost to
+  the process-wall wedge, during which the host billed and executed
+  nothing.
 
 ### Sidebar: the fixture-fidelity trap (what killed the Not-Hotdog test)
 
@@ -250,7 +255,7 @@ of "booted ≠ working"), and **not every on-device model that works on
 hardware works in the simulator — verify per-API before betting a test
 suite on it.**
 
-## 6. Results on the EC2 Mac `[EC2-PENDING]`
+## 6. Results on the EC2 Mac
 
 - 6.1 IDLE ladder — **measured** (mac2-m2pro.metal, iPhone-17e sims,
   iOS 26.5): N=1–16 all boot, install, launch, and render across both
@@ -356,8 +361,11 @@ the second signature, because you only get one chance to record it.**
   extrapolating from that regime is honest math on an insufficient
   range. The method lesson: **free-tier calibration validates the
   harness, not the hardware** — real capacity planning needs at least
-  one measurement in the target density regime. `[EC2-PENDING: ANIMATE/
-  INFER scorecard rows]`
+  one measurement in the target density regime. The same failure
+  repeated across profiles: the free tier could not reach the edge-AI
+  efficiency knee (it exhausted memory at N=3, three simulators short of
+  the N=6 peak), and it inverted the sharding conclusion entirely —
+  0.15× measured on three cores versus 1.65× on twelve.
 
 ## 7. Analysis: CI economics
 
@@ -419,8 +427,11 @@ your volume is high and sustained.
   ~$[COST].
 - Data: all CSVs/timelines on results branches; dashboard is a single
   self-contained HTML file.
-- Cost table: `[EC2-PENDING]` final bill breakdown (host-hours, EBS,
-  nothing else).
+- Cost: ~36.5 host-hours (24-hour minimum plus a ~12.5-hour extension
+  taken to complete the data set after operational losses), one 400 GB
+  gp3 volume for about a day, and nothing else. Roughly 13 of those
+  hours were the process-wall wedge — billed, idle, and now guarded
+  against in the harness.
 
 ## 10. Conclusion
 
