@@ -61,7 +61,7 @@ make the demo mirror that use case, still without AWS spend:
 - ✅ OIDC role for GitHub Actions + manual-dispatch host workflow
   (`aws-provision.yml`): status / provision / teardown, no stored secrets
 
-## Phase 3 — AWS provisioning (the 24h clock)
+## Phase 3 — AWS provisioning (the 24h clock) ✅
 
 - ✅ `aws/provision.sh` / `aws/teardown.sh` / runbook (SSM-resolved AMI,
   auto AZ, SSH scoped to caller IP, 24h-aware teardown)
@@ -85,31 +85,38 @@ make the demo mirror that use case, still without AWS spend:
 - ✅ `ec2-maintenance.yml`: dispatchable disk report/cleanup, stranded-
   results rescue, APFS resize — the box needs no SSH to operate
 
-## Phase 5 — The experiment
+## Phase 5 — The experiment ✅
 
-- ⬜ Full N-sweep to failure with repeats; failure mode logged at the ceiling
-- ⬜ Process/fd limit tuning if that wall arrives before RAM
+- ✅ IDLE ladder to failure: working point 16, hard ceiling 24
+  (`launchd_sim` cannot bind a session), ~1,115 MB and ~260 processes
+  per simulator
+- ✅ INFER (edge-AI) ladder N=1–12, zero failures: 45.6 → 523.9 inf/s,
+  per-simulator efficiency peaks at N=6, knee coincides with swap onset
+- ✅ Shard speedup: 1.65× at 2 shards, 0.70× at 4 — the crossover is set
+  by suite-time vs per-simulator startup cost, not core count
+- ✅ Process wall characterized and guarded (`hard_cleanup`,
+  `PROC_CEILING`); disk wall guarded (`DISK_FLOOR_GB`)
+- ⬜ ANIMATE ladder — attempted, contaminated by the process leak it
+  revealed; reported as a finding rather than density data
 
 ## Phase 6 — The answer
 
 - ✅ Report generator (`analyze.py --report`)
-- ⬜ Final `report.md` committed: the number, the knee, what broke first
-- 🔄 White paper (`docs/PAPER.md`) — skeleton drafted; sections 6–7 await
-  EC2 data
-- 🔄 Six-page exec/eng brief (`docs/BRIEF.md`) — skeleton drafted; incl.
-  competitive analysis ("the GCP-shaped hole")
-- ⬜ Dashboard snapshots per ladder, versioned in `docs/snapshots/`
+- ✅ White paper (`docs/PAPER.md`) — complete: abstract, method,
+  free-tier findings, operations study, results, economics, conclusion
+- ✅ Six-page exec/eng brief (`docs/BRIEF.md`) — complete, incl. the
+  costed traps table and the competitive analysis
+- ✅ Dashboard snapshots per ladder in `docs/snapshots/` (01-idle,
+  03-infer, 04-shard, 05-final)
 
 ## Phase 6.5 — Publication polish (repo is referenced by the docs)
 
-- ⬜ README rewritten as the repo's front door: the question, headline
-  numbers, links to BRIEF/PAPER/dashboard, quickstart per tier
-- ⬜ Branch merged to main via PR; stale branches pruned; results branches
-  (`ec2-results`, `ci-results*`, `aws-state`) documented in README
-- ⬜ Docs pass: RUNDAY updated with today's real lessons (no Xcode on AMI,
-  pending-host wait, SSM recovery path); aws/README troubleshooting current
-- ⬜ Sanity sweep: no credentials/IPs/account-ids in tracked files; LICENSE
-  present; mocks and harness runnable by a stranger (`make dryrun`)
+- ✅ README rewritten as the repo's front door: measured answer up top,
+  links to BRIEF/PAPER/snapshots/data branches
+- ✅ RUNDAY corrected with measured reality and the six run-day lessons
+- ✅ Sanity sweep: no credentials, IPs, or account ids in tracked files;
+  `make dryrun` runs the whole harness on any OS
+- 🔄 PR #7 covers the full body of work — awaiting merge to main
 
 ## Phase 7 — Optional extras
 
