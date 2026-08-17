@@ -11,9 +11,10 @@
 
 ## TL;DR
 
-- **One cloud Mac runs ~16 iOS simulators.** Twenty-four refuse to boot.
-  Under real on-device AI inference we ran **12 at once at 524
-  inferences/sec** — though throughput *per* simulator peaks at six.
+- **One AWS EC2 `mac2-m2pro.metal` (M2 Pro · 12 cores · 32 GB, iOS 26.5)
+  runs ~16 iOS simulators.** Twenty-four refuse to boot. Under real
+  on-device AI inference we ran **12 at once at 524 inferences/sec** —
+  though throughput *per* simulator peaks at six.
 - **Free GitHub-hosted macOS runners work.** They caught 7 real bugs at
   $0 and proved the whole pipeline — but their capacity estimate was
   **wrong by 4×** (~90 predicted vs 16 actual). Cheap tiers validate
@@ -24,20 +25,28 @@
 - **Getting the Mac cost more than using it.** Roughly half the paid
   24-hour window went to acquisition and setup — a capacity lottery, an
   image with no Xcode, and failures that report the wrong problem.
-- **The opportunity is packaging, not silicon.** A provider (GCP or
-  anyone) selling *ready parallel simulators* instead of *machines you
-  must prepare yourself* would beat today's offering without better
-  hardware. The numbers here are the capacity model such a service
-  needs — and the reason nobody has published them is that they cost a
-  day of engineering to obtain.
+- **The gap is a layer up, not a better box.** MacStadium (Orka) and the
+  CI vendors already solved VM-slicing on Mac metal and hide the 24-hour
+  lease — that space is taken, and AWS's own packaging is the weakest in
+  the market despite owning the only hyperscaler fleet. What nobody
+  sells is the unit customers actually want: **guaranteed parallel
+  simulator-capacity**, reservable, on ready images, with published
+  density numbers so teams can size before they buy. For GCP the
+  defensible wedge is the part MacStadium structurally cannot match —
+  native IAM/VPC/artifact integration and reservable capacity at
+  hyperscaler scale. The honest counterweight: Apple's licensing terms
+  cap the economics, Mac fleets are capex-heavy, and the specialist
+  incumbent has not scaled to hyperscale — which is either the risk or
+  the reason the seat is still empty.
 
 ---
 
 ## Abstract
 
 How many iOS simulators can one cloud Mac run, and what breaks first? We
-measured it on an AWS EC2 Mac (M2 Pro, 12 cores, 32 GB, iOS 26.5), after
-validating every component on free hardware first.
+measured it on an AWS EC2 `mac2-m2pro.metal` Dedicated Host (Apple M2
+Pro, 12 cores, 32 GB, iOS 26.5), after validating every component on
+free hardware first.
 
 **The answer: ~16 reliably, 24 refuses.** Each simulator costs ~1,115 MB
 and ~260 processes, so the memory and process-table walls arrive

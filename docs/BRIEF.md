@@ -260,14 +260,33 @@ hit, with the cost attached (page 5):
    because the naïve RAM math is off by 4× (page 3), customers cannot
    size these machines correctly without vendor-published numbers.
 
-**To surpass, not just match:** sell **parallel simulators, not
-machines.** Simulators are processes; density is schedulable. A service
-where a phone team requests "40 iOS 26 simulators for 20 minutes" —
-billed by simulator-minute, spread across whatever metal the provider
-owns — matches what teams actually want (fast PR feedback) instead of
-what hardware happens to be. The measurements in this study are the
-capacity model such a service would need, and the fact that they were
-*this hard to obtain* is precisely why nobody has published them.
+**Where the actual white space is.** Be clear-eyed about who already
+occupies this market: MacStadium (with Orka) and the CI vendors —
+CircleCI, Bitrise, Codemagic — have solved VM-slicing on Mac metal and
+hide the 24-hour lease behind per-minute pricing. Rebuilding that is
+late and undifferentiated. AWS, meanwhile, owns the only hyperscaler
+Apple-silicon fleet and packages it worst.
+
+The unclaimed layer is one step up: **nobody sells parallel simulator
+capacity as a product.** Every vendor sells a machine or a VM and leaves
+the customer to discover — as we did, expensively — how many simulators
+fit and where the returns stop. A service where a team requests "40 iOS
+26 simulators for 20 minutes," billed by simulator-minute against a
+published density model, sells the outcome teams want (fast PR feedback)
+rather than the hardware they must first learn to operate.
+
+**The GCP-specific wedge** is what a specialist structurally cannot
+match: native IAM/VPC/artifact integration, data-residency guarantees,
+and *reservable* capacity at hyperscaler scale — turning the capacity
+lottery documented on page 5 into an SLA.
+
+**The counterweight a serious review must state.** Apple's licensing
+terms (macOS on Apple hardware, minimum lease durations) cap the
+achievable margin; Mac fleets are capex-heavy and refresh on Apple's
+schedule, not the provider's; and the fact that the specialist incumbent
+has not scaled to hyperscale is evidence either of a limited TAM or of
+an unclaimed seat. This study cannot settle which — but it does quantify
+the customer pain precisely enough to price the bet.
 
 ---
 
