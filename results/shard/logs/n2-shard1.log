@@ -1,0 +1,123 @@
+Command line invocation:
+    /Applications/Xcode_16.4.app/Contents/Developer/usr/bin/xcodebuild test-without-building -xctestrun /Users/runner/work/awsEC2iOS-test/awsEC2iOS-test/app/build/Build/Products/SimDensity_iphonesimulator18.5-arm64-x86_64.xctestrun -destination "platform=iOS Simulator,id=5BAA0E0E-6353-4796-BAF9-F2F37B976FCA" "-only-testing:SimDensityUITests/ShardedUITests/test02_idleRelaunch" "-only-testing:SimDensityUITests/ShardedUITests/test04_animateSteady" "-only-testing:SimDensityUITests/ShardedUITests/test06_scrollSteady" "-only-testing:SimDensityUITests/ShardedUITests/test08_animateAgain" "-only-testing:SimDensityUITests/ShardedUITests/test10_idleFinal" "-only-testing:SimDensityUITests/ShardedUITests/test12_scrollFinal"
+
+--- xcodebuild: WARNING: Using the first of multiple matching destinations:
+{ platform:iOS Simulator, arch:arm64, id:5BAA0E0E-6353-4796-BAF9-F2F37B976FCA, OS:26.2, name:shard-2-2 }
+{ platform:iOS Simulator, arch:x86_64, id:5BAA0E0E-6353-4796-BAF9-F2F37B976FCA, OS:26.2, name:shard-2-2 }
+2026-08-17 03:52:08.167575+0000 SimDensityUITests-Runner[24408:78951] [UIKit App Config] `UIScene` lifecycle will soon be required. Failure to adopt will result in an assert in the future.
+2026-08-17 03:52:08.212363+0000 SimDensityUITests-Runner[24408:78951] [Default] Running tests...
+    t =      nans Interface orientation changed to Portrait
+Test Suite 'Selected tests' started at 2026-08-17 03:52:17.743.
+Test Suite 'SimDensityUITests.xctest' started at 2026-08-17 03:52:17.744.
+Test Suite 'ShardedUITests' started at 2026-08-17 03:52:17.744.
+Test Case '-[SimDensityUITests.ShardedUITests test02_idleRelaunch]' started.
+    t =     0.00s Start Test at 2026-08-17 03:52:17.744
+    t =     0.89s Set Up
+    t =     0.90s Open com.simdensity.app
+    t =     0.90s     Launch com.simdensity.app
+    t =    18.00s         Setting up automation session
+    t =    20.53s         Wait for com.simdensity.app to idle
+    t =    22.26s Waiting 20.0s for "SIM DENSITY" StaticText to exist
+    t =    23.31s     Checking `Expect predicate `existsNoRetry == 1` for object "SIM DENSITY" StaticText`
+    t =    23.31s         Checking existence of `"SIM DENSITY" StaticText`
+    t =    23.38s Waiting 10.0s for "IDLE" StaticText to exist
+    t =    24.41s     Checking `Expect predicate `existsNoRetry == 1` for object "IDLE" StaticText`
+    t =    24.41s         Checking existence of `"IDLE" StaticText`
+    t =    26.47s Tear Down
+Test Case '-[SimDensityUITests.ShardedUITests test02_idleRelaunch]' passed (26.825 seconds).
+Test Case '-[SimDensityUITests.ShardedUITests test04_animateSteady]' started.
+    t =     0.00s Start Test at 2026-08-17 03:52:44.572
+    t =     0.09s Set Up
+    t =     0.10s Open com.simdensity.app
+    t =     0.10s     Launch com.simdensity.app
+    t =     0.10s         Terminate com.simdensity.app:24665
+    t =     4.07s         Setting up automation session
+    t =     5.61s         Wait for com.simdensity.app to idle
+    t =     7.40s Waiting 20.0s for "SIM DENSITY" StaticText to exist
+    t =     8.48s     Checking `Expect predicate `existsNoRetry == 1` for object "SIM DENSITY" StaticText`
+    t =     8.48s         Checking existence of `"SIM DENSITY" StaticText`
+    t =     8.58s Waiting 10.0s for "ANIMATE" StaticText to exist
+    t =     9.63s     Checking `Expect predicate `existsNoRetry == 1` for object "ANIMATE" StaticText`
+    t =     9.63s         Checking existence of `"ANIMATE" StaticText`
+    t =    11.68s Tear Down
+Test Case '-[SimDensityUITests.ShardedUITests test04_animateSteady]' passed (12.165 seconds).
+Test Case '-[SimDensityUITests.ShardedUITests test06_scrollSteady]' started.
+    t =     0.00s Start Test at 2026-08-17 03:52:56.735
+    t =     0.05s Set Up
+    t =     0.05s Open com.simdensity.app
+    t =     0.05s     Launch com.simdensity.app
+    t =     0.05s         Terminate com.simdensity.app:25091
+    t =     5.73s         Setting up automation session
+    t =     5.90s         Wait for com.simdensity.app to idle
+    t =     6.92s Waiting 20.0s for "SIM DENSITY" StaticText to exist
+    t =     8.00s     Checking `Expect predicate `existsNoRetry == 1` for object "SIM DENSITY" StaticText`
+    t =     8.00s         Checking existence of `"SIM DENSITY" StaticText`
+    t =     8.37s Waiting 10.0s for "SCROLL" StaticText to exist
+    t =     9.41s     Checking `Expect predicate `existsNoRetry == 1` for object "SCROLL" StaticText`
+    t =     9.41s         Checking existence of `"SCROLL" StaticText`
+    t =    11.46s Tear Down
+Test Case '-[SimDensityUITests.ShardedUITests test06_scrollSteady]' passed (11.750 seconds).
+Test Case '-[SimDensityUITests.ShardedUITests test08_animateAgain]' started.
+    t =     0.00s Start Test at 2026-08-17 03:53:08.485
+    t =     0.03s Set Up
+    t =     0.03s Open com.simdensity.app
+    t =     0.03s     Launch com.simdensity.app
+    t =     0.03s         Terminate com.simdensity.app:25489
+    t =     2.87s         Setting up automation session
+    t =     3.35s         Wait for com.simdensity.app to idle
+    t =     4.63s Waiting 20.0s for "SIM DENSITY" StaticText to exist
+    t =     5.69s     Checking `Expect predicate `existsNoRetry == 1` for object "SIM DENSITY" StaticText`
+    t =     5.69s         Checking existence of `"SIM DENSITY" StaticText`
+    t =     5.72s Waiting 10.0s for "ANIMATE" StaticText to exist
+    t =     6.76s     Checking `Expect predicate `existsNoRetry == 1` for object "ANIMATE" StaticText`
+    t =     6.76s         Checking existence of `"ANIMATE" StaticText`
+    t =     8.80s Tear Down
+Test Case '-[SimDensityUITests.ShardedUITests test08_animateAgain]' passed (9.083 seconds).
+Test Case '-[SimDensityUITests.ShardedUITests test10_idleFinal]' started.
+    t =     0.00s Start Test at 2026-08-17 03:53:17.568
+    t =     0.02s Set Up
+    t =     0.02s Open com.simdensity.app
+    t =     0.02s     Launch com.simdensity.app
+    t =     0.02s         Terminate com.simdensity.app:25861
+    t =     2.16s         Setting up automation session
+    t =     2.82s         Wait for com.simdensity.app to idle
+    t =     3.89s Waiting 20.0s for "SIM DENSITY" StaticText to exist
+    t =     4.94s     Checking `Expect predicate `existsNoRetry == 1` for object "SIM DENSITY" StaticText`
+    t =     4.94s         Checking existence of `"SIM DENSITY" StaticText`
+    t =     4.99s Waiting 10.0s for "IDLE" StaticText to exist
+    t =     6.08s     Checking `Expect predicate `existsNoRetry == 1` for object "IDLE" StaticText`
+    t =     6.08s         Checking existence of `"IDLE" StaticText`
+    t =     8.10s Tear Down
+Test Case '-[SimDensityUITests.ShardedUITests test10_idleFinal]' passed (8.368 seconds).
+Test Case '-[SimDensityUITests.ShardedUITests test12_scrollFinal]' started.
+    t =     0.00s Start Test at 2026-08-17 03:53:25.936
+    t =     0.02s Set Up
+    t =     0.02s Open com.simdensity.app
+    t =     0.02s     Launch com.simdensity.app
+    t =     0.02s         Terminate com.simdensity.app:26517
+    t =     6.01s         Setting up automation session
+    t =     7.49s         Wait for com.simdensity.app to idle
+    t =     9.06s Waiting 20.0s for "SIM DENSITY" StaticText to exist
+    t =    10.13s     Checking `Expect predicate `existsNoRetry == 1` for object "SIM DENSITY" StaticText`
+    t =    10.13s         Checking existence of `"SIM DENSITY" StaticText`
+    t =    10.30s Waiting 10.0s for "SCROLL" StaticText to exist
+    t =    11.36s     Checking `Expect predicate `existsNoRetry == 1` for object "SCROLL" StaticText`
+    t =    11.36s         Checking existence of `"SCROLL" StaticText`
+    t =    13.41s Tear Down
+Test Case '-[SimDensityUITests.ShardedUITests test12_scrollFinal]' passed (13.660 seconds).
+Test Suite 'ShardedUITests' passed at 2026-08-17 03:53:39.597.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 81.850 (81.853) seconds
+Test Suite 'SimDensityUITests.xctest' passed at 2026-08-17 03:53:39.597.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 81.850 (81.854) seconds
+Test Suite 'Selected tests' passed at 2026-08-17 03:53:39.598.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 81.850 (81.855) seconds
+2026-08-17 03:53:41.103 xcodebuild[21051:68773] [MT] IDETestOperationsObserverDebug: 154.425 elapsed -- Testing started completed.
+2026-08-17 03:53:41.104 xcodebuild[21051:68773] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-17 03:53:41.104 xcodebuild[21051:68773] [MT] IDETestOperationsObserverDebug: 154.425 sec, +154.425 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/runner/Library/Developer/Xcode/DerivedData/SimDensity-coyeyebafgrpkvbfzohkoscwbqig/Logs/Test/Test-SimDensity-2026.08.17_03-51-05-+0000.xcresult
+
+** TEST EXECUTE SUCCEEDED **
+
+Testing started
