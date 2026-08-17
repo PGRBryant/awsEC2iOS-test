@@ -1,0 +1,62 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -xctestrun /Users/ec2-user/actions-runner/_work/awsEC2iOS-test/awsEC2iOS-test/app/build/Build/Products/SimDensity_iphonesimulator26.5-arm64-x86_64.xctestrun -destination "platform=iOS Simulator,id=89FA24FC-1351-44BF-B424-1867C3236AF8" "-only-testing:SimDensityUITests/ShardedUITests/test01_idleLaunch" "-only-testing:SimDensityUITests/ShardedUITests/test07_idleAgain"
+
+2026-08-17 00:35:01.635 xcodebuild[78214:1554059] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+2026-08-17 00:35:01.639 xcodebuild[78214:1554059] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+2026-08-17 00:35:02.282 xcodebuild[78214:1554059] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+2026-08-17 00:38:50.774914+0000 SimDensityUITests-Runner[79248:1577861] [Default] Running tests...
+objc[79248]: Class UIAccessibilityLoaderWebShared is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/AccessibilityBundles/WebCore.axbundle/WebCore (0x1097b0310) and /Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/AccessibilityBundles/WebKit.axbundle/WebKit (0x1084c8398). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+Test Suite 'Selected tests' started at 2026-08-17 00:38:56.024.
+Test Suite 'SimDensityUITests.xctest' started at 2026-08-17 00:38:56.025.
+Test Suite 'ShardedUITests' started at 2026-08-17 00:38:56.025.
+Test Case '-[SimDensityUITests.ShardedUITests test01_idleLaunch]' started.
+    t =     0.00s Start Test at 2026-08-17 00:38:56.027
+    t =     0.15s Set Up
+    t =     0.16s Open com.simdensity.app
+    t =     0.16s     Launch com.simdensity.app
+2026-08-17 00:38:57.747 xcodebuild[78214:1554059] [MT] IDELaunchParametersSnapshot: The operation couldn’t be completed. (DebuggerLLDB.DebuggerVersionStore.StoreError error 0.)
+2026-08-17 00:38:57.748 xcodebuild[78214:1554059] [MT] IDELaunchParametersSnapshot: no debugger version
+    t =     3.16s         Setting up automation session
+    t =     3.95s         Wait for com.simdensity.app to idle
+    t =     5.16s Waiting 20.0s for "SIM DENSITY" StaticText to exist
+    t =     6.23s     Checking `Expect predicate `existsNoRetry == 1` for object "SIM DENSITY" StaticText`
+    t =     6.23s         Checking existence of `"SIM DENSITY" StaticText`
+    t =     6.35s Waiting 10.0s for "IDLE" StaticText to exist
+    t =     7.43s     Checking `Expect predicate `existsNoRetry == 1` for object "IDLE" StaticText`
+    t =     7.43s         Checking existence of `"IDLE" StaticText`
+    t =     9.53s Tear Down
+Test Case '-[SimDensityUITests.ShardedUITests test01_idleLaunch]' passed (9.987 seconds).
+Test Case '-[SimDensityUITests.ShardedUITests test07_idleAgain]' started.
+    t =     0.00s Start Test at 2026-08-17 00:39:06.014
+    t =     0.02s Set Up
+    t =     0.02s Open com.simdensity.app
+    t =     0.02s     Launch com.simdensity.app
+    t =     0.02s         Terminate com.simdensity.app:79317
+2026-08-17 00:39:07.134 xcodebuild[78214:1554059] [MT] IDELaunchParametersSnapshot: The operation couldn’t be completed. (DebuggerLLDB.DebuggerVersionStore.StoreError error 0.)
+2026-08-17 00:39:07.134 xcodebuild[78214:1554059] [MT] IDELaunchParametersSnapshot: no debugger version
+    t =     1.88s         Setting up automation session
+    t =     2.66s         Wait for com.simdensity.app to idle
+    t =     3.83s Waiting 20.0s for "SIM DENSITY" StaticText to exist
+    t =     4.90s     Checking `Expect predicate `existsNoRetry == 1` for object "SIM DENSITY" StaticText`
+    t =     4.90s         Checking existence of `"SIM DENSITY" StaticText`
+    t =     4.95s Waiting 10.0s for "IDLE" StaticText to exist
+    t =     6.02s     Checking `Expect predicate `existsNoRetry == 1` for object "IDLE" StaticText`
+    t =     6.02s         Checking existence of `"IDLE" StaticText`
+    t =     8.09s Tear Down
+Test Case '-[SimDensityUITests.ShardedUITests test07_idleAgain]' passed (8.677 seconds).
+Test Suite 'ShardedUITests' passed at 2026-08-17 00:39:14.691.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 18.664 (18.666) seconds
+Test Suite 'SimDensityUITests.xctest' passed at 2026-08-17 00:39:14.691.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 18.664 (18.667) seconds
+Test Suite 'Selected tests' passed at 2026-08-17 00:39:14.692.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 18.664 (18.667) seconds
+2026-08-17 00:39:15.417 xcodebuild[78214:1554059] [MT] IDETestOperationsObserverDebug: 253.124 elapsed -- Testing started completed.
+2026-08-17 00:39:15.417 xcodebuild[78214:1554059] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-17 00:39:15.417 xcodebuild[78214:1554059] [MT] IDETestOperationsObserverDebug: 253.124 sec, +253.124 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/ec2-user/Library/Developer/Xcode/DerivedData/SimDensity-higkhhtjxzcbaeffavqjbukcqxdk/Logs/Test/Test-SimDensity-2026.08.17_00-35-01-+0000.xcresult
+
+** TEST EXECUTE SUCCEEDED **
+
+Testing started
