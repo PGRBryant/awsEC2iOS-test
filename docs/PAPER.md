@@ -34,11 +34,7 @@
   density numbers so teams can size before they buy. For GCP the
   defensible wedge is the part MacStadium structurally cannot match —
   native IAM/VPC/artifact integration and reservable capacity at
-  hyperscaler scale. The honest counterweight: Apple's licensing terms
-  cap the economics, Mac fleets are capex-heavy, and the specialist
-  incumbent has not scaled to hyperscale — which is either the risk or
-  the reason the seat is still empty.
-
+  hyperscaler scale. 
 ---
 
 ## Abstract
