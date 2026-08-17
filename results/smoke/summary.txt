@@ -1,0 +1,20 @@
+
+  Sweep summary  (results/smoke/results.csv)
+  device=com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max  runtime=iOS-26-2
+  --------------------------------------------------------------------------
+     N  trials   boot%  render%  boot_wall_s  peak_mem_gb   fail modes
+  --------------------------------------------------------------------------
+     1       1    100%     100%         46.1          6.2            -
+     2       1    100%     100%        281.4          6.4            -
+  --------------------------------------------------------------------------
+
+  Reliable working point : 2
+  Hard ceiling (boot)    : not reached in this sweep
+  legend:  (blank)=clean  ~=degraded/render  !=boot failure
+
+  (not enough distinct boot counts for a RAM model — sweep more levels)
+
+  report written to results/smoke/report.md
+
+  (matplotlib not installed — skipping charts; table above is the result)
+

@@ -1,0 +1,3 @@
+level,repeat,device,runtime,profile,boots_ok,installs_ok,launches_ok,renders_ok,boot_wall_ms,mem_used_mb,mem_total_mb,load1,proc_count,swap_used_mb,infer_ops,failure_mode
+1,1,com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max,com.apple.CoreSimulator.SimRuntime.iOS-26-2,INFER,1,1,1,1,46072,6397,7168,277.63,762,255.19,39.1,
+2,1,com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max,com.apple.CoreSimulator.SimRuntime.iOS-26-2,INFER,2,2,2,2,281372,6599,7168,10.56,815,3553.62,59.93,
