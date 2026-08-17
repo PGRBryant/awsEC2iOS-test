@@ -10,18 +10,29 @@
 
 ## Abstract
 
-*(Write last. Four sentences: the question, the method, the number, the
-surprise.)*
-
-- The question: how many iOS simulators can one Mac reliably run in CI,
-  and what breaks first?
-- The method: a verified-before-paid pipeline — mock harness → free hosted
-  macOS runners → one 24-hour EC2 Mac Dedicated Host window.
-- The headline numbers: `[EC2-PENDING]` reliable working point and hard
-  ceiling per load profile (predictions: ~90 IDLE / ~63 ANIMATE / ~22
-  INFER on 32 GB).
-- The operational surprise: getting the Mac was harder than measuring it —
-  quota ≠ capacity, and the AMI ships without Xcode.
+We measured how many iOS simulators one cloud Mac can reliably run, and
+what breaks first, using a three-tier pipeline that validated every
+component on free hardware before allocating a paid AWS EC2 Mac
+Dedicated Host. On a `mac2-m2pro.metal` (M2 Pro, 12 cores, 32 GB)
+running iOS 26.5, the reliable working point is **~16 simulators** and
+the hard ceiling is **24**, where `launchd_sim` can no longer bind a
+session; each simulator costs **~1,115 MB** over an 11.8 GB base and
+spawns ~260 processes, so the memory and process-table walls arrive
+together. Free GitHub-hosted runners had predicted ~90 simulators from a
+267 MB/sim fit — **a 4× miss**, because at N ≤ 3 on a 7 GB runner
+simulators share warm caches and never carry a full working set; the
+central methodological finding is that cheap tiers validate a harness
+but cannot size hardware. Under real on-device neural inference,
+aggregate throughput scaled to 11.5× at N=12 while *per-simulator*
+efficiency peaked at N=6, and splitting a test suite across simulators
+paid only to 2-way (1.65×) before per-simulator startup overhead made
+4-way sharding slower than not sharding at all. Finally, acquiring and
+preparing the hardware proved harder than measuring it: quota is not
+capacity, the AMI ships without Xcode, disk and process-table limits
+kill the CI runner along with the experiment, and roughly half of the
+first paid window went to setup — an operations profile we document in
+full because it, not the density number, is what makes cloud Mac testing
+expensive today.
 
 ## 1. Motivation
 
@@ -249,13 +260,95 @@ suite on it.**
   is already 15 GB into swap with 315 s boot walls and ~4,200 processes.
   Reliable working point ~12–16; hard ceiling < 24; the RAM and process
   walls arrive together on this configuration.
-- 6.2 ANIMATE ladder.
-- 6.3 INFER ladder: aggregate inf/s vs N — where inference throughput
-  plateaus with 12 real cores (it never plateaued on 3).
-- 6.4 Shard speedup with real cores: the crossover the 3-core runner
-  couldn't show; wall-time vs shard count vs ideal.
-- 6.5 Timelines at the ceiling: what dying looks like (RAM exhaustion
-  pattern vs boot-storm pattern).
+- 6.2 ANIMATE ladder — **not measured; the run became a finding
+  instead.** The ladder executed on a host still holding ~4,600 leaked
+  processes and 29 GB of swap from the previous ladder's failed N=24
+  boot (26.5 GB in use at N=1, versus 9.4 GB for a clean IDLE N=1). The
+  numbers describe contamination, not ANIMATE, and are reported only as
+  evidence for the process-leak finding in Section 5.
+
+### 6.3 INFER ladder — the edge-AI curve
+
+Complete and clean: N = 1–12, every simulator booted, installed,
+launched and rendered across both trials, zero failures.
+
+| N | aggregate inf/s | per-sim | vs N=1 | marginal per added sim | mem | swap | procs |
+|---|---|---|---|---|---|---|---|
+| 1 | 45.6 | 45.6 | 1.0× | — | 10.2 GB | 0 | 540 |
+| 2 | 97.7 | 48.9 | 2.1× | 52.1 | 15.8 GB | 0 | 817 |
+| 4 | 214.3 | 53.6 | 4.7× | 58.3 | 17.9 GB | 0 | 1,298 |
+| **6** | **331.0** | **55.2** | 7.3× | 58.4 | 22.9 GB | 0 | 1,860 |
+| 8 | 394.0 | 49.3 | 8.6× | 31.5 | 25.3 GB | 1.7 GB | 2,332 |
+| 10 | 456.1 | 45.6 | 10.0× | 31.0 | 26.8 GB | 4.0 GB | 2,820 |
+| 12 | 523.9 | 43.7 | 11.5× | 33.9 | 27.1 GB | 9.4 GB | 3,154 |
+
+Three results:
+
+1. **Density is superlinear before it is sublinear.** Per-simulator
+   throughput *rises* from 45.6 to 55.2 inf/s between N=1 and N=6 — a
+   single simulator cannot saturate the machine because inference has
+   serial phases (image synthesis, request setup) that overlap across
+   processes. Six simulators do more than six times the work of one.
+2. **The knee is at N=6 and it is memory, not compute.** Marginal return
+   holds near 58 inf/s per added simulator through N=6, then halves to
+   ~32 — and the inflection coincides exactly with swap onset at N=8.
+   Beyond the knee you continue buying throughput at roughly half price.
+3. **It never plateaued.** Even at N=12 under 9.4 GB of swap, aggregate
+   throughput was still climbing. The binding constraint on *edge-AI
+   density* is memory, not the 12 cores — a higher-RAM machine would
+   keep going. INFER costs ~1.5 GB/sim against IDLE's ~1.1 GB/sim.
+
+Practical guidance: **~6 simulators per 12-core/32 GB Mac for peak
+efficiency; up to 12 for maximum absolute throughput if swap is
+acceptable.**
+
+### 6.4 Shard speedup — where parallel testing stops paying
+
+The same 12-test UI suite, split across N simulators. Every shard passed
+at every level, so the timings are trustworthy.
+
+| shards | wall time | speedup | efficiency vs ideal |
+|---|---|---|---|
+| 1 | 149.3 s | 1.00× | 100% |
+| **2** | **90.5 s** | **1.65×** | **83%** |
+| 4 | 213.2 s | 0.70× | 18% |
+| 6 | 369.9 s | 0.40× | 7% |
+| 8 | 685.3 s | 0.22× | 3% |
+
+**The crossover exists, and it is far below the core count.** On three
+free cores, 2-way sharding was a 0.15× *slowdown*; on twelve real cores
+it is a genuine 1.65× win. But 4-way sharding is already slower than not
+sharding at all, and 8-way adds 536 seconds to a 149-second suite.
+Twelve cores did not buy twelve-way parallelism — it bought two-way.
+
+The mechanism is fixed cost: every shard pays simulator boot, install
+and launch (40–90 s here, worse under boot-storm contention) before
+running a single test. Sharding pays only while `suite_time / n` still
+exceeds that tax. **The optimal shard count is set by the ratio of suite
+runtime to per-simulator startup cost, not by how many cores you own.**
+A 30-minute suite would shard profitably much further; a 150-second
+suite peaks at two. This is precisely the calculation teams skip when
+they buy "one big Mac" and expect linear returns.
+
+### 6.5 What dying looks like
+
+The per-second timelines separate two distinct failure signatures:
+
+- **Boot storm (slow, recoverable).** Boot wall-time grows
+  superlinearly — 0.8 s at N=1, 83 s at N=8, 315 s at N=16 IDLE — while
+  memory climbs smoothly. Nothing fails; the ladder simply becomes
+  expensive. This is what a "reliable working point" looks like from the
+  inside.
+- **Exhaustion (fast, terminal).** At the ceiling, memory flattens
+  against the physical limit, swap takes over (9.4 GB at N=12 INFER;
+  15 GB at N=16 IDLE), and the process count marches toward the
+  per-user limit at ~260 processes per simulator. The next level does
+  not degrade — it refuses: `launchd_sim` cannot bind a session, and
+  every subsequent operation on the host fails including the harness's
+  own recovery attempts.
+
+The practical consequence for anyone repeating this: **instrument for
+the second signature, because you only get one chance to record it.**
 - 6.6 Predictions vs reality — **the calibration transfer FAILED, and
   that is the finding**: the hosted-runner model (267 MB/sim, ceiling
   ~90) missed by 4× (1,115 MB/sim, ceiling <24). Why: at N≤3 on a 7 GB
@@ -266,16 +359,47 @@ suite on it.**
   one measurement in the target density regime. `[EC2-PENDING: ANIMATE/
   INFER scorecard rows]`
 
-## 7. Analysis: CI economics `[EC2-PENDING]`
+## 7. Analysis: CI economics
 
-- $/parallel-simulator-hour: hosted runners vs EC2 Mac at measured
-  densities; where the break-even sits for a team's PR volume.
-- Sharding economics: cores per shard for >1× speedup; when N cheap small
-  runners beat one dense box.
-- The 24h minimum as a scheduling problem: batch your density needs.
-- Edge-AI testing implication: INFER density is ~4× more expensive than
-  IDLE density; capacity planning for AI-feature test suites must use the
-  inference number, not the idle number.
+**Cost per parallel simulator-hour.** At the measured working point, one
+`mac2-m2pro.metal` sustains ~16 IDLE simulators or ~6–12 under edge-AI
+load. Against the instance's on-demand rate, the *marginal* cost of a
+simulator is small — but the *fixed* costs dominate the decision:
+
+- A 24-hour minimum allocation means the practical unit of purchase is
+  a day, not an hour. A team needing two hours of density pays for
+  twenty-four.
+- Our own setup tax consumed roughly half the first window (Section 5).
+  Amortized across one run, that overhead exceeded the compute.
+- Therefore: **batch density work.** The economics only favor a
+  dedicated host when a full day's worth of parallel testing is queued
+  behind it. Below that threshold, hosted runners or a managed Mac
+  vendor's per-minute pricing wins outright, despite their margin.
+
+**Sharding economics.** The measured curve (6.4) makes the rule
+concrete: shard until `suite_time / n` approaches per-simulator startup
+cost, then stop. For our suite that was n=2 on a 12-core machine. Teams
+routinely over-shard on the assumption that cores are the constraint;
+the constraint is actually startup overhead, and over-sharding is not
+merely wasteful — it makes the suite *slower* while consuming more
+hardware. A team's first action here should be measuring their own
+boot+install cost, since it sets the entire parallelism budget.
+
+**Edge-AI capacity planning.** INFER-profile simulators cost ~1.5 GB
+each against ~1.1 GB idle, and their throughput knee arrives at N=6 on a
+32 GB box. Capacity planned on idle density will over-commit AI-feature
+suites by roughly 2–3× and land the fleet in swap, where the marginal
+value of each added simulator halves. **Plan AI test capacity on
+inference numbers, and size for RAM, not cores** — inference throughput
+here was memory-bound long before it was compute-bound.
+
+**The comparison that matters.** Hosted runners cost nothing and prove
+correctness, but cap at ~3 simulators and vary in wall-time by more than
+2×. A dedicated Mac delivers 5× the density and stable timing, at the
+price of a day's minimum and the operational burden documented in
+Section 5. Managed Mac clouds sell the middle: per-minute VMs on their
+own fleet, at a margin that is straightforwardly worth paying unless
+your volume is high and sustained.
 
 ## 8. Limitations
 
@@ -300,9 +424,38 @@ suite on it.**
 
 ## 10. Conclusion
 
-*(Write after 6/7. Shape: the number, the wall that arrived first, the
-free-tier calibration verdict, and the operations lesson — the cloud Mac
-bottleneck is acquisition and setup, not simulation.)*
+**The number: ~16.** A 12-core, 32 GB cloud Mac reliably runs about
+sixteen iOS 26 simulators, refuses at twenty-four, and reaches those
+limits through memory and the process table simultaneously — not through
+CPU, which was never the binding constraint in any profile we measured.
+Under edge-AI load the useful figure is smaller still: six simulators
+for peak efficiency, twelve for maximum throughput at half marginal
+value.
+
+**The wall that arrived first was the one nobody models.** Not RAM, not
+cores — the *process table*, at ~260 processes per simulator rather than
+the 15–25 commonly assumed, and behind that, disk, at ~0.5–1 GB
+materialized per booted simulator. Both walls take the test harness and
+the CI agent down with them, turning a data point into an outage. A
+density experiment must be built to survive the collapse it is designed
+to produce.
+
+**The calibration verdict: free tiers prove pipelines, not capacity.**
+Our hosted-runner model was internally sound and wrong by 4×, because
+three simulators on a 7 GB box do not exercise the regime that matters.
+This is the transferable lesson for any team sizing a fleet from cheap
+measurements — and the reason we published the miss rather than quietly
+recalibrating.
+
+**The bottleneck is acquisition, not simulation.** Simulators behave
+predictably; getting a Mac to run them on does not. A capacity lottery
+with no queue, a 24-hour minimum, an image without a toolchain, failure
+messages that describe the wrong problem, and no supported way back in
+when a key is lost — these consumed about half of the first paid day.
+That is the real state of cloud iOS testing in 2026, and it is also the
+opening: the provider who sells *guaranteed parallel simulators* instead
+of *machines you must prepare yourself* would not need better hardware
+to win. They would only need to remove the day we spent getting here.
 
 ---
 
