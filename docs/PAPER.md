@@ -2,38 +2,60 @@
 
 **A density, economics, and operations study of iOS simulator CI on AWS EC2 Mac**
 
-> All results below are measured on real hardware: one AWS
-> `mac2-m2pro.metal` Dedicated Host, allocated 2026-08-15 12:50 UTC and
-> released 2026-08-17 01:24 UTC. Raw data: the `ec2-results` branch of
-> this repository. Companion executive brief: `docs/BRIEF.md`.
+> All results measured on one AWS `mac2-m2pro.metal` Dedicated Host
+> (M2 Pro · 12 cores · 32 GB, iOS 26.5), allocated 2026-08-15 12:50 UTC
+> and released 2026-08-17 01:24 UTC. Raw data: the `ec2-results` branch.
+> Executive brief: `docs/BRIEF.md`.
+
+---
+
+## TL;DR
+
+- **One cloud Mac runs ~16 iOS simulators.** Twenty-four refuse to boot.
+  Under real on-device AI inference we ran **12 at once at 524
+  inferences/sec** — though throughput *per* simulator peaks at six.
+- **Free GitHub-hosted macOS runners work.** They caught 7 real bugs at
+  $0 and proved the whole pipeline — but their capacity estimate was
+  **wrong by 4×** (~90 predicted vs 16 actual). Cheap tiers validate
+  pipelines; only target hardware sizes fleets.
+- **More parallelism is not more speed.** Sharding a test suite across 2
+  simulators: 1.65× faster. Across 4: *slower than not sharding at all.*
+  Startup cost, not core count, sets the limit.
+- **Getting the Mac cost more than using it.** Roughly half the paid
+  24-hour window went to acquisition and setup — a capacity lottery, an
+  image with no Xcode, and failures that report the wrong problem.
+- **The opportunity is packaging, not silicon.** A provider (GCP or
+  anyone) selling *ready parallel simulators* instead of *machines you
+  must prepare yourself* would beat today's offering without better
+  hardware. The numbers here are the capacity model such a service
+  needs — and the reason nobody has published them is that they cost a
+  day of engineering to obtain.
 
 ---
 
 ## Abstract
 
-We measured how many iOS simulators one cloud Mac can reliably run, and
-what breaks first, using a three-tier pipeline that validated every
-component on free hardware before allocating a paid AWS EC2 Mac
-Dedicated Host. On a `mac2-m2pro.metal` (M2 Pro, 12 cores, 32 GB)
-running iOS 26.5, the reliable working point is **~16 simulators** and
-the hard ceiling is **24**, where `launchd_sim` can no longer bind a
-session; each simulator costs **~1,115 MB** over an 11.8 GB base and
-spawns ~260 processes, so the memory and process-table walls arrive
-together. Free GitHub-hosted runners had predicted ~90 simulators from a
-267 MB/sim fit — **a 4× miss**, because at N ≤ 3 on a 7 GB runner
-simulators share warm caches and never carry a full working set; the
-central methodological finding is that cheap tiers validate a harness
-but cannot size hardware. Under real on-device neural inference,
-aggregate throughput scaled to 11.5× at N=12 while *per-simulator*
-efficiency peaked at N=6, and splitting a test suite across simulators
-paid only to 2-way (1.65×) before per-simulator startup overhead made
-4-way sharding slower than not sharding at all. Finally, acquiring and
-preparing the hardware proved harder than measuring it: quota is not
-capacity, the AMI ships without Xcode, disk and process-table limits
-kill the CI runner along with the experiment, and roughly half of the
-first paid window went to setup — an operations profile we document in
-full because it, not the density number, is what makes cloud Mac testing
-expensive today.
+How many iOS simulators can one cloud Mac run, and what breaks first? We
+measured it on an AWS EC2 Mac (M2 Pro, 12 cores, 32 GB, iOS 26.5), after
+validating every component on free hardware first.
+
+**The answer: ~16 reliably, 24 refuses.** Each simulator costs ~1,115 MB
+and ~260 processes, so the memory and process-table walls arrive
+together — CPU never binds. Under real on-device neural inference,
+aggregate throughput scaled to 11.5× at twelve simulators while
+per-simulator efficiency peaked at six. Test-suite sharding paid only to
+2-way (1.65×); 4-way was slower than not sharding.
+
+**The methodological finding: free-tier calibration missed by 4×.**
+Hosted runners predicted ~90 simulators; three simulators on a 7 GB box
+never enter the regime that binds. Cheap tiers validate a harness but
+cannot size hardware.
+
+**The operational finding: acquisition is the bottleneck, not
+simulation.** Quota is not capacity, the AMI ships without Xcode, and
+disk and process limits kill the CI runner along with the experiment.
+Half the first paid day went to setup. That profile — not the density
+number — is what makes cloud Mac testing expensive today.
 
 ## 1. Motivation
 
