@@ -152,6 +152,48 @@ instance billing immediately; the host release will be **refused** until T+24
 — that refusal is expected. **Re-run `teardown` just after T+24**, then run
 `status` and confirm zero hosts. Done: the bill stops.
 
+## How the box reaches the internet
+
+The Mac has outbound internet from first boot — it pulls an ~8 GB Xcode
+`.xip`, installs Homebrew packages, clones from GitHub, and keeps the
+Actions runner connected. Three things make that work, and none of them
+is IAM:
+
+1. **A public IP.** `provision.sh` passes `--associate-public-ip-address`
+   and launches into the default VPC's default subnet.
+2. **A route to an Internet Gateway.** The default VPC ships with an IGW
+   and a `0.0.0.0/0 → igw-…` route, so packets have somewhere to go.
+3. **Open egress.** Security groups allow *all outbound* by default. The
+   `simdensity-ssh` group we create only restricts **inbound** (SSH from
+   the `ssh_cidr` you pass). We never touch egress.
+
+**IAM is not in the network path.** Two separate planes:
+
+| Plane | Governs | Example here |
+|---|---|---|
+| **Control (IAM)** | who may *call AWS APIs* — create a VPC, launch an instance, open a security group | the OIDC role's `ec2:RunInstances`, `ec2:CreateSecurityGroup`, … |
+| **Data (VPC)** | whether *packets* move — subnets, routes, gateways, security groups, NACLs | public IP + IGW route + default-open egress |
+
+IAM decides whether you may *build* the road; it has no opinion about
+traffic once the road exists. An instance with no IAM role still reaches
+the internet if its subnet routes there. The SSM role we attach for
+Session Manager is not an exception — it grants permission to call SSM
+*APIs*, and the agent still needs a network path to reach those endpoints.
+
+### If you want a tighter posture
+
+| Posture | Setup | Trade-off |
+|---|---|---|
+| **Public subnet** (what we run) | public IP + IGW; inbound limited to your `/32` | simplest; box is directly addressable |
+| **Private + NAT** | no public IP; outbound via NAT Gateway | nothing reaches in; ~$0.045/h plus data processing |
+| **Fully private** | no IGW/NAT; VPC endpoints for SSM, S3 | most locked down — **Session Manager still works over VPC endpoints**, so you keep a shell with zero internet exposure |
+
+The third row is worth considering for a repeat run: we ended up working
+almost entirely through Session Manager anyway, so a private subnet would
+have cost no capability. The only thing it breaks is downloading Xcode and
+Homebrew from the public internet — which is the argument for baking a
+pre-provisioned AMI once and reusing it.
+
 ## Contingencies
 
 - **SSH unreachable**: security group only allows your `ssh_cidr` — if your
