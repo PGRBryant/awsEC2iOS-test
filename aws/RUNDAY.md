@@ -46,8 +46,8 @@ the point of the exercise:
 | profile | hosted-runner fit | predicted ceiling | **measured on this box** |
 |---|---|---|---|
 | IDLE    | ~267 MB/sim  | ~90 sims | **~1,115 MB/sim → 16 clean, 24 won't boot** |
-| ANIMATE | ~356 MB/sim  | ~63 sims | contaminated run (see below) |
-| INFER   | ~1,080 MB/sim | ~22 sims | `[pending]` |
+| ANIMATE | ~356 MB/sim  | ~63 sims | contaminated run — see the process-wall lesson |
+| INFER   | ~1,080 MB/sim | ~22 sims | **~1.5 GB/sim → 12 clean, never plateaued (memory-bound)** |
 
 Why the miss: at N≤3 on a 7 GB runner, simulators share warm OS caches and
 never carry a full working set. Extrapolating from that regime is honest
@@ -71,138 +71,198 @@ you see `failure_mode=process_wall` in a CSV, that guard just saved a host.
 
 Actions → **AWS Mac host** → Run workflow → `provision`, instance type
 `mac2-m2pro.metal`, your key pair name, your home IP as `ssh_cidr`
-(e.g. `203.0.113.7/32`). Note the public IP from the run output
-(or run the `status` action).
+(e.g. `203.0.113.7/32`). The workflow hunts every AZ offering the type and
+waits out the host's `pending` state automatically — but capacity is a
+lottery: we needed **10 hourly attempts (~6 h)** before one landed. If it
+fails on capacity, just re-dispatch later; nothing is billed until a host
+allocates.
 
-**Immediately set two alarms: T+22h ("start teardown") and T+24h ("release
-host").**
+**The moment allocation succeeds, set two alarms: T+22h ("start teardown")
+and T+24h ("release host").** Note the public IP from the run output (or
+run the `status` action).
 
-## T+0:10 — first contact
+**Grow the disk now.** The default 100 GB dies mid-ladder. Console → EC2 →
+Volumes → Modify → 400 GB. It will not take effect until the reboot below.
+
+## First contact — two doors in
+
+**Door 1, SSH** (if you hold the `.pem`):
 
 ```bash
-ssh -i simdensity.pem ec2-user@<PUBLIC_IP>     # first boot can take minutes
-sudo xcodebuild -license accept && xcodebuild -runFirstLaunch
+ssh -i simdensity.pem ec2-user@<PUBLIC_IP>    # first boot resizes APFS; be patient
+```
+
+**Door 2, Session Manager** (keyless — what we actually used after losing
+the `.pem`): attach an instance role carrying `AmazonSSMManagedInstanceCore`
+(EC2 → instance → Actions → Security → Modify IAM role), wait up to ~30 min
+for the agent to see its credentials, then Systems Manager → Session
+Manager → Start session. If sshd is crash-looping in the console output,
+the AMI shipped without host keys: `sudo ssh-keygen -A`.
+
+## The Xcode hour (budget ~1.5 h — the AMI ships without it)
+
+On a trusted browser, log into developer.apple.com/download/all, start the
+Xcode `.xip` download, and copy the request from DevTools as cURL. Then on
+the Mac:
+
+```bash
+cd ~ && <pasted curl command> -o Xcode.xip      # datacenter-speed download
+cd /Applications && sudo xip --expand ~/Xcode.xip   # ~20 min, silent
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch
+xcodebuild -downloadPlatform iOS                # the simulator runtime (~7 GB)
+xcrun simctl list runtimes                      # success = an iOS runtime listed
+rm ~/Xcode.xip
+```
+
+Skip the `xcodes` CLI: the Homebrew formula compiles from source (which
+needs Xcode — circular) and its login rejects passwords that work in a
+browser.
+
+**Now reboot once** (console → Instance state → Reboot — never Stop) so
+macOS sees the grown volume, then run the `resize-disk` action of
+`ec2-maintenance.yml`. Confirm `df -h /` shows ~400 GB.
+
+## Hand the box to CI (recommended over tmux)
+
+Register a self-hosted runner (repo → Settings → Actions → Runners → New
+self-hosted runner, macOS/ARM64; Enter through every `config.sh` prompt),
+then make it boot-persistent with the `install-runner-daemon` action of
+`ec2-maintenance.yml` — `svc.sh` needs a GUI login the box doesn't have,
+and `nohup` dies on reboot. (Daemon PATH is bare; the workflows already
+re-add `/opt/homebrew/bin`.)
+
+From here the whole day is workflow dispatches of `sweep.yml`, and every
+run publishes its results append-only to the `ec2-results` branch — data
+survives even if the box dies mid-ladder, which it will try to do.
+
+```bash
 git clone https://github.com/PGRBryant/awsEC2iOS-test.git simdensity && cd simdensity
-./scripts/bootstrap.sh                          # brew + xcodegen + app build
-make smoke                                      # N=1,2 IDLE — must be clean
+./scripts/bootstrap.sh && make smoke            # N=1,2 must be clean before anything paid
 ```
 
-If smoke is clean, the day is de-risked. Run sweeps inside `tmux` so an SSH
-drop doesn't kill a 3-hour sweep: `tmux new -s sweep`.
+## The ladders — as actually run, with what to expect
 
-## T+1 — IDLE density ladder (~3h)
+**IDLE** — `sweep.yml`: mode `sweep`, profile `IDLE`, levels `1 2 4 8 16 24`,
+repeats 2, boot_timeout 600 (~2.5 h). Expect: 16 clean, 24 refuses
+(`launchd_sim` cannot bind a session), ~1,115 MB/sim, 15 GB of swap and
+315 s boot walls at 16. Going past 24 buys nothing but risk.
 
-```bash
-./harness/sweep.sh --app app/build/Build/Products/Debug-iphonesimulator/SimDensity.app \
-  --levels "1 2 4 8 16 24 32 48 64 80 96" --repeats 2 \
-  --profile IDLE --sample-interval 5 --boot-timeout 600 --out results/ec2-idle
-python3 harness/analyze.py results/ec2-idle/results.csv --report results/ec2-idle/report.md
-```
+**INFER** — levels `1 2 4 6 8 10 12` (~5 h; inference makes everything
+slower). Expect: 45.6 → 523.9 aggregate inf/s, per-sim efficiency peaking
+at **6**, swap from 8, no plateau — memory-bound, not core-bound.
 
-This finds the headline hard ceiling. If the failure mode is process-count
-(not RAM), raise the wall and re-run the top levels:
-`sudo sysctl kern.maxproc; sudo launchctl limit maxproc` (record before/after).
+**ANIMATE** — levels `1 2 4 8 12 16 20` (~3 h). Run it on a *clean* box:
+ours ran after a failed boot leaked ~4,600 processes and measured only the
+contamination. The harness now hard-cleans between levels, but if a prior
+ladder ended at its ceiling, reboot before this one.
 
-## T+4 — ANIMATE ladder (~3h)
+**Shard** — mode `shard`, levels `1 2 4 6 8` (~1 h). Expect 1.65× at 2
+shards and *worse than unsharded* from 4 up: each shard pays 40–90 s of
+boot+install before its first test.
 
-```bash
-./harness/sweep.sh --app ... --levels "1 2 4 8 16 24 32 40 48" --repeats 2 \
-  --profile ANIMATE --sample-interval 5 --boot-timeout 600 --out results/ec2-animate
-```
+## Getting data off the box
 
-## T+7 — INFER ladder (~3h) — the edge-AI curve
-
-```bash
-./harness/sweep.sh --app ... --levels "1 2 4 8 12 16 20 24" --repeats 2 \
-  --profile INFER --sample-interval 5 --boot-timeout 600 --out results/ec2-infer
-```
-
-The chart that matters: aggregate inf/s vs N. On 3 cores it was still linear
-at N=3 (30→46→88). With 12 cores, find the plateau.
-
-## T+10 — shard speedup with real cores (~2h)
-
-```bash
-make bootstrap-tests
-./harness/shard.sh --levels "1 2 4 6 8 12" --boot-timeout 600 --out results/ec2-shard
-```
-
-On 3 cores, 2-way sharding was 0.15× (slower!). This measures where the
-crossover actually is when cores exist. This is the CI-economics headline.
-
-## T+13 — analysis, dashboard, and getting data OFF the box
-
-```bash
-python3 harness/compare.py \
-  runner-7gb=<hosted-runner results.csv if kept> \
-  ec2-idle=results/ec2-idle/results.csv
-cd harness && python3 dashboard.py ../results/ec2-idle --shard ../results/ec2-shard/speedup.csv && cd ..
-# copy EVERYTHING off before teardown — from your laptop:
-scp -i simdensity.pem -r ec2-user@<PUBLIC_IP>:simdensity/results ./results-ec2
-```
-
-Spare hours before teardown? Phase-7 extras, in value order: re-run the top-3
-IDLE levels with `maxproc` raised; a `--repeats 3` pass at the knee levels for
-variance; SCROLL profile ladder.
+Nothing to do — `sweep.yml` publishes every run to the `ec2-results`
+branch as it completes, and `ec2-maintenance.yml`'s `clean` action rescues
+results stranded by a crash *before* checkout can delete them. `scp` is
+only needed for ad-hoc files from manual runs.
 
 ## T+22 — teardown (instance now, host at 24h)
 
 Actions → **AWS Mac host** → `teardown`. Terminating the instance stops
-instance billing immediately; the host release will be **refused** until T+24
-— that refusal is expected. **Re-run `teardown` just after T+24**, then run
-`status` and confirm zero hosts. Done: the bill stops.
+instance billing immediately; the host release will be **refused** until
+T+24 — that refusal is expected. **Re-run `teardown` just after T+24**,
+then run `status` and confirm zero hosts. Done: the bill stops.
 
-## How the box reaches the internet
+## How connectivity works — three ways in, one way out
 
-The Mac has outbound internet from first boot — it pulls an ~8 GB Xcode
-`.xip`, installs Homebrew packages, clones from GitHub, and keeps the
-Actions runner connected. Three things make that work, and none of them
-is IAM:
+The box had three control channels during the run, and it pays to notice
+that **two of the three "ways in" are really outbound connections the Mac
+initiates**:
 
-1. **A public IP.** `provision.sh` passes `--associate-public-ip-address`
-   and launches into the default VPC's default subnet.
-2. **A route to an Internet Gateway.** The default VPC ships with an IGW
-   and a `0.0.0.0/0 → igw-…` route, so packets have somewhere to go.
-3. **Open egress.** Security groups allow *all outbound* by default. The
-   `simdensity-ssh` group we create only restricts **inbound** (SSH from
-   the `ssh_cidr` you pass). We never touch egress.
+| Channel | Direction | Needs an open inbound port? | Needs a credential? |
+|---|---|---|---|
+| **SSH** | inbound | yes — 22, from your `ssh_cidr` only | the `.pem` |
+| **SSM Session Manager** | *outbound* — the agent long-polls AWS and your "session" rides that channel | no | an instance role |
+| **Actions runner** | *outbound* — long-polls GitHub for jobs | no | a registration token, once |
 
-**IAM is not in the network path.** Two separate planes:
+That is why losing the `.pem` was recoverable, and why the box could be
+driven entirely from CI with port 22 locked to one home IP: SSH is the
+only channel that requires a hole in the wall.
 
-| Plane | Governs | Example here |
-|---|---|---|
-| **Control (IAM)** | who may *call AWS APIs* — create a VPC, launch an instance, open a security group | the OIDC role's `ec2:RunInstances`, `ec2:CreateSecurityGroup`, … |
-| **Data (VPC)** | whether *packets* move — subnets, routes, gateways, security groups, NACLs | public IP + IGW route + default-open egress |
+**The way out** takes three ingredients, and none of them is IAM:
 
-IAM decides whether you may *build* the road; it has no opinion about
-traffic once the road exists. An instance with no IAM role still reaches
-the internet if its subnet routes there. The SSM role we attach for
-Session Manager is not an exception — it grants permission to call SSM
-*APIs*, and the agent still needs a network path to reach those endpoints.
+1. **A public IP** — `provision.sh` passes `--associate-public-ip-address`
+   into the default VPC's default subnet.
+2. **A route to the Internet Gateway** — the default VPC ships with
+   `0.0.0.0/0 → igw-…`.
+3. **Open egress** — security groups allow all *outbound* by default; the
+   `simdensity-ssh` group only restricts inbound.
 
-### If you want a tighter posture
+That trio is how the Mac pulled an 8 GB Xcode image, installed Homebrew,
+and kept its runner connected from first boot with zero configuration.
+
+**IAM is not in the packet path.** Two planes: IAM (control) decides who
+may *call AWS APIs* — launch instances, open security groups; the VPC
+(data) decides whether *packets* move. IAM authorizes building the road,
+never the traffic on it. The SSM role is no exception — it grants the
+right to call SSM APIs; the agent still needs the network path above.
+
+**Tighter postures, if you want one:**
 
 | Posture | Setup | Trade-off |
 |---|---|---|
-| **Public subnet** (what we run) | public IP + IGW; inbound limited to your `/32` | simplest; box is directly addressable |
-| **Private + NAT** | no public IP; outbound via NAT Gateway | nothing reaches in; ~$0.045/h plus data processing |
-| **Fully private** | no IGW/NAT; VPC endpoints for SSM, S3 | most locked down — **Session Manager still works over VPC endpoints**, so you keep a shell with zero internet exposure |
+| **Public subnet** (this run) | public IP + IGW; inbound = your `/32` | simplest; box is addressable |
+| **Private + NAT** | no public IP; egress via NAT Gateway | nothing reaches in; ~$0.045/h + data |
+| **Fully private** | no IGW/NAT; VPC endpoints for SSM/S3 | Session Manager still works — a shell with zero internet exposure; but no public downloads, so bake Xcode into an AMI first |
 
-The third row is worth considering for a repeat run: we ended up working
-almost entirely through Session Manager anyway, so a private subnet would
-have cost no capability. The only thing it breaks is downloading Xcode and
-Homebrew from the public internet — which is the argument for baking a
-pre-provisioned AMI once and reusing it.
+We lived in Session Manager anyway, so the third row would have cost this
+run nothing — it is the natural pairing for a pre-provisioned AMI.
+
+## Seeing the screen (VNC) — the money shot, taken carefully
+
+macOS ships Screen Sharing (a VNC server on port 5900). Sixteen simulators
+tiled across one desktop is the most convincing artifact this experiment
+can produce — **but a GUI session spins up WindowServer and consumes real
+memory and CPU, so never do this during a measured ladder.** Take the
+screenshot in its own window, outside the data runs.
+
+On the Mac (SSM shell):
+
+```bash
+sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+  -activate -configure -access -on -restart -agent -privs -all
+sudo launchctl enable system/com.apple.screensharing
+sudo passwd ec2-user            # VNC authenticates with the account password
+```
+
+From your laptop — tunnel it, never open 5900 to the internet:
+
+```bash
+# keyless, via SSM:
+aws ssm start-session --target <INSTANCE_ID> \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["5900"],"localPortNumber":["5900"]}'
+# or with the .pem:
+ssh -i simdensity.pem -L 5900:localhost:5900 ec2-user@<PUBLIC_IP>
+```
+
+Then Finder → **Cmd+K** → `vnc://localhost:5900` (any VNC client works).
+One caveat: it is a 1:1 GUI session — one viewer at a time.
 
 ## Contingencies
 
-- **SSH unreachable**: security group only allows your `ssh_cidr` — if your
-  IP changed, add the new one: EC2 → Security groups → `simdensity-ssh` →
-  edit inbound rules.
-- **Boot storms at high N**: raise `--boot-timeout`; the sweep already boots
-  sequentially-waited. Slow ≠ failed; the CSV separates them.
-- **Runaway box (load so high SSH dies)**: EC2 console → reboot instance.
-  Results up to the last completed trial are already in the CSVs.
-- **Anything ambiguous**: the harness never leaves sims behind, every trial
-  is torn down; when in doubt, `xcrun simctl shutdown all && xcrun simctl
-  delete all` and re-run the level.
+- **SSH unreachable**: the security group only allows your `ssh_cidr` — if
+  your IP changed, add the new one (EC2 → Security groups →
+  `simdensity-ssh`), or skip SSH entirely and use Session Manager.
+- **Boot storms at high N**: raise `--boot-timeout`; slow ≠ failed, and the
+  CSV separates them.
+- **Box accepts jobs but executes nothing** (runner picks up work, zero
+  steps run): that is the process wall — `fork()` is failing machine-wide.
+  Console → **Reboot** (never Stop — Stop triggers host scrubbing). The
+  LaunchDaemon brings the runner back on its own.
+- **Disk full**: dispatch `ec2-maintenance.yml` → `clean`; it rescues any
+  stranded results first, then reclaims space.
+- **Anything ambiguous**: `xcrun simctl shutdown all && xcrun simctl delete
+  all` and re-run the level — the harness never depends on leftover sims.
